@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.local
+.git
+.gitignore
+.vscode
+.idea
+*.log
+coverage
+service-account*.json
+deploy
