@@ -1,5 +1,6 @@
 import "dotenv/config";
 import Fastify from "fastify";
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import formbody from "@fastify/formbody";
 import staticPlugin from "@fastify/static";
@@ -54,8 +55,9 @@ await app.register(cors, {
 });
 
 await app.register(formbody);
+await app.register(cookie);
 
-app.get("/healthz", async () => ({ status: "ok", ts: Date.now() }));
+app.get("/health", async () => ({ status: "ok", ts: Date.now() }));
 
 const trackerPath = join(__dirname, "..", "public", "t.js");
 let trackerCache: Buffer | null = null;

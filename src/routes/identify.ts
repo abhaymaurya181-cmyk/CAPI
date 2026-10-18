@@ -1,4 +1,5 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   FieldValue,
@@ -8,6 +9,36 @@ import {
   type Visitor,
 } from "../lib/firestore.js";
 import { hashIdentity } from "../lib/hash.js";
+
+const LCID_COOKIE = "lcid";
+const LCID_MAX_AGE = 63_072_000; // 2 years
+
+// Derive the apex domain (`.example.com`) from the request Host so the lcid
+// cookie survives across subdomains. Localhost / IP / single-label hosts get
+// no Domain attribute, which scopes the cookie to just that host.
+function cookieDomainFromHost(host?: string): string | undefined {
+  if (!host) return undefined;
+  const bare = host.split(":")[0];
+  if (bare === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(bare)) return undefined;
+  const parts = bare.split(".");
+  if (parts.length < 2) return undefined;
+  return "." + parts.slice(-2).join(".");
+}
+
+function ensureLcid(req: FastifyRequest, reply: FastifyReply): string {
+  const existing = req.cookies?.[LCID_COOKIE];
+  if (existing) return existing;
+  const fresh = randomUUID();
+  reply.setCookie(LCID_COOKIE, fresh, {
+    path: "/",
+    httpOnly: true,
+    secure: req.protocol === "https",
+    sameSite: "lax",
+    maxAge: LCID_MAX_AGE,
+    domain: cookieDomainFromHost(req.headers.host),
+  });
+  return fresh;
+}
 
 const identifyBody = z.object({
   event: z.enum([
@@ -61,6 +92,12 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
     }
     const body = parsed.data;
 
+    // Mint-or-reuse the first-party visitor cookie BEFORE any Firestore work
+    // so the Set-Cookie header is always on the response (even on anonymous
+    // 202 returns). The cookie value is stored on the visitor doc when a
+    // key resolves, so later lookups by lcid are possible.
+    const lcid = ensureLcid(req, reply);
+
     const identity = hashIdentity({
       phone: body.phone,
       email: body.email,
@@ -81,7 +118,7 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
     // Anonymous events (no identifier) are not persisted. Click IDs stay in
     // the browser cookie until the next identified event.
     if (!key) {
-      return reply.code(202).send({ accepted: true, stored: false });
+      return reply.code(202).send({ accepted: true, stored: false, lcid });
     }
 
     const now = Timestamp.now();
@@ -111,8 +148,11 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
 
     if (c?._fbc) update.fbc = c._fbc;
     if (c?._fbp) update.fbp = c._fbp;
-    if (c?.client_cookie_id) {
-      update.cookie_ids = FieldValue.arrayUnion(c.client_cookie_id) as unknown as string[];
+    const cookieIds = Array.from(
+      new Set([lcid, c?.client_cookie_id].filter(Boolean) as string[])
+    );
+    if (cookieIds.length > 0) {
+      update.cookie_ids = FieldValue.arrayUnion(...cookieIds) as unknown as string[];
     }
 
     if (body.consent) {
@@ -129,6 +169,7 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
       accepted: true,
       stored: true,
       visitor_key_prefix: key.slice(0, 8),
+      lcid,
     });
   });
 }
