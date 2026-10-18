@@ -8,7 +8,12 @@ import {
   visitorKey,
   type Visitor,
 } from "../lib/firestore.js";
-import { hashIdentity } from "../lib/hash.js";
+import {
+  hashIdentity,
+  normalizeEmail,
+  normalizeName,
+  normalizePhoneE164,
+} from "../lib/hash.js";
 
 const LCID_COOKIE = "lcid";
 const LCID_MAX_AGE = 63_072_000; // 2 years
@@ -132,6 +137,17 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
       city_hash: identity.city,
       state_hash: identity.state,
       country_hash: identity.country,
+      // Raw (normalized) values persisted alongside hashes for admin display.
+      // ignoreUndefinedProperties on the Firestore client drops anything that
+      // doesn't normalize cleanly, so a malformed phone won't wipe a good one.
+      raw_phone: normalizePhoneE164(body.phone) ?? undefined,
+      raw_email: normalizeEmail(body.email) ?? undefined,
+      raw_first_name: normalizeName(body.first_name) ?? undefined,
+      raw_last_name: normalizeName(body.last_name) ?? undefined,
+      raw_zip: body.zip?.trim() || undefined,
+      raw_city: body.city?.trim() || undefined,
+      raw_state: body.state?.trim() || undefined,
+      raw_country: body.country?.trim().toUpperCase() || undefined,
       user_id: body.user_id,
       shopify_customer_id: body.shopify_customer_id,
       client_ip_address: req.ip,

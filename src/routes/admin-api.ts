@@ -277,26 +277,69 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
     }
 
     const snap = await q.get();
-    const items = snap.docs.map((d) => {
-      const v = d.data() as Visitor;
-      return {
-        key: d.id,
-        key_prefix: d.id.slice(0, 10),
-        phone_hash_prefix: v.phone_meta ? v.phone_meta.slice(0, 10) : null,
-        email_hash_prefix: v.email_hash ? v.email_hash.slice(0, 10) : null,
-        shopify_customer_id: v.shopify_customer_id ?? null,
-        user_id: v.user_id ?? null,
-        has_gclid: Boolean(v.click_ids?.gclid?.value),
-        has_fbclid: Boolean(v.click_ids?.fbclid?.value),
-        has_fbc: Boolean(v.fbc),
-        has_fbp: Boolean(v.fbp),
-        cookie_ids_count: v.cookie_ids?.length ?? 0,
-        touchpoints: v.touchpoints ?? [],
-        first_seen_at: v.first_seen_at?.toDate().toISOString() ?? null,
-        last_seen_at: v.last_seen_at?.toDate().toISOString() ?? null,
-        client_ip: v.client_ip_address ?? null,
-      };
-    });
+    const items = snap.docs.map((d) => serializeVisitor(d.id, d.data() as Visitor));
     return reply.send({ items, count: items.length });
   });
+
+  app.get<{ Params: { key: string } }>(
+    "/admin/api/visitors/:key",
+    async (req, reply) => {
+      if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+      const snap = await visitorsCol.doc(req.params.key).get();
+      if (!snap.exists) return reply.code(404).send({ error: "not_found" });
+      return reply.send(serializeVisitor(snap.id, snap.data() as Visitor));
+    }
+  );
+}
+
+function serializeVisitor(key: string, v: Visitor) {
+  return {
+    key,
+    key_prefix: key.slice(0, 10),
+    // Raw values for admin display
+    phone: v.raw_phone ?? null,
+    email: v.raw_email ?? null,
+    first_name: v.raw_first_name ?? null,
+    last_name: v.raw_last_name ?? null,
+    zip: v.raw_zip ?? null,
+    city: v.raw_city ?? null,
+    state: v.raw_state ?? null,
+    country: v.raw_country ?? null,
+    shopify_customer_id: v.shopify_customer_id ?? null,
+    user_id: v.user_id ?? null,
+    // Click IDs
+    gclid: v.click_ids?.gclid?.value ?? null,
+    fbclid: v.click_ids?.fbclid?.value ?? null,
+    fbc: v.fbc ?? null,
+    fbp: v.fbp ?? null,
+    gclid_captured_at: v.click_ids?.gclid?.captured_at?.toDate().toISOString() ?? null,
+    fbclid_captured_at: v.click_ids?.fbclid?.captured_at?.toDate().toISOString() ?? null,
+    // Cookie / device
+    cookie_ids: v.cookie_ids ?? [],
+    client_ip: v.client_ip_address ?? null,
+    client_user_agent: v.client_user_agent ?? null,
+    // Behavioral
+    touchpoints: v.touchpoints ?? [],
+    first_seen_at: v.first_seen_at?.toDate().toISOString() ?? null,
+    last_seen_at: v.last_seen_at?.toDate().toISOString() ?? null,
+    consent: v.consent
+      ? {
+          marketing: v.consent.marketing,
+          version: v.consent.version,
+          timestamp: v.consent.timestamp?.toDate().toISOString() ?? null,
+        }
+      : null,
+    // Hashes (muted — for engineer debugging/dedup verification)
+    hashes: {
+      phone_meta: v.phone_meta ?? null,
+      phone_google: v.phone_google ?? null,
+      email: v.email_hash ?? null,
+      first_name: v.first_name_hash ?? null,
+      last_name: v.last_name_hash ?? null,
+      zip: v.zip_hash ?? null,
+      city: v.city_hash ?? null,
+      state: v.state_hash ?? null,
+      country: v.country_hash ?? null,
+    },
+  };
 }

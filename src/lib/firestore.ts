@@ -22,6 +22,16 @@ export interface VisitorConsent {
 export interface Visitor {
   user_id?: string;
   shopify_customer_id?: string;
+  // Raw (normalized) PII — admin-UI display only. Hashes below are the ones
+  // sent to Meta CAPI / Google Ads. See admin-api.ts for the UI exposure.
+  raw_phone?: string;
+  raw_email?: string;
+  raw_first_name?: string;
+  raw_last_name?: string;
+  raw_zip?: string;
+  raw_city?: string;
+  raw_state?: string;
+  raw_country?: string;
   phone_meta?: string | null;
   phone_google?: string | null;
   email_hash?: string | null;

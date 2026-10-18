@@ -719,6 +719,65 @@
     .pill-none    { background: #f1ebe9; color: var(--muted); }
     .badge-set    { color: var(--success); font-weight: 600; }
     .badge-unset  { color: var(--muted); }
+
+    /* Row expansion */
+    .data-table tbody tr.row-main {
+      cursor: pointer;
+    }
+    .data-table tbody tr.row-main .chevron {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-right: 2px solid var(--muted);
+      border-bottom: 2px solid var(--muted);
+      transform: rotate(-45deg);
+      transition: transform 0.15s ease;
+      margin-left: 4px;
+    }
+    .data-table tbody tr.row-main.expanded .chevron {
+      transform: rotate(45deg);
+      border-color: var(--brand);
+    }
+    .data-table tbody tr.row-expansion > td {
+      background: #faf8f7;
+      padding: 0;
+      border-bottom: 1px solid #ece5e2;
+    }
+    .expansion-card {
+      padding: 16px 22px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px 28px;
+    }
+    .expansion-section {
+      min-width: 0;
+    }
+    .expansion-section h4 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--brand);
+      margin: 0 0 8px;
+      font-weight: 600;
+    }
+    .kv-row {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 8px;
+      font-size: 12px;
+      padding: 2px 0;
+      align-items: baseline;
+    }
+    .kv-key {
+      color: var(--muted);
+    }
+    .kv-val {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+    .kv-val.empty { color: var(--muted); font-style: italic; }
+    .kv-val.hash  { color: var(--muted); font-size: 11px; }
   </style>
 </head>
 
@@ -797,14 +856,14 @@
             <table class="data-table">
               <thead>
                 <tr>
+                  <th></th>
                   <th>Last seen</th>
-                  <th>Visitor key</th>
+                  <th>Name</th>
+                  <th>Phone</th>
+                  <th>Email</th>
                   <th>Shopify ID</th>
-                  <th>Phone #</th>
-                  <th>Email #</th>
                   <th>Click IDs</th>
-                  <th>Touchpoints</th>
-                  <th>Client IP</th>
+                  <th>IP</th>
                 </tr>
               </thead>
               <tbody id="visitors-body">
@@ -841,6 +900,7 @@
             <table class="data-table">
               <thead>
                 <tr>
+                  <th></th>
                   <th>Created</th>
                   <th>Order ID</th>
                   <th>Source</th>
@@ -851,7 +911,7 @@
                 </tr>
               </thead>
               <tbody id="conversions-body">
-                <tr><td colspan="7" class="muted center">Loading…</td></tr>
+                <tr><td colspan="8" class="muted center">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1059,6 +1119,54 @@
       to.addEventListener("change", () => prefix === "visitors" ? loadVisitors() : loadConversions());
     }
 
+    function esc(s) {
+      if (s == null) return "";
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function kv(key, value, cls) {
+      const empty = value == null || value === "";
+      return `
+        <div class="kv-row">
+          <span class="kv-key">${esc(key)}</span>
+          <span class="kv-val ${cls || ""} ${empty ? "empty" : ""}">${empty ? "—" : esc(value)}</span>
+        </div>
+      `;
+    }
+
+    // Wire click-to-expand on a table body. Only one row expanded at a time.
+    // Each render pass clears the state, so we re-collapse on refresh.
+    function wireExpand(tbodySel, colspan, renderExpansion) {
+      const tbody = $(tbodySel);
+      tbody.addEventListener("click", async (e) => {
+        const tr = e.target.closest("tr.row-main");
+        if (!tr || !tbody.contains(tr)) return;
+
+        // Collapse any currently-expanded row
+        const openExp = tbody.querySelector("tr.row-expansion");
+        const openMain = tbody.querySelector("tr.row-main.expanded");
+        const wasThisRow = openMain === tr;
+        if (openExp) openExp.remove();
+        if (openMain) openMain.classList.remove("expanded");
+        if (wasThisRow) return;
+
+        tr.classList.add("expanded");
+        const exp = document.createElement("tr");
+        exp.className = "row-expansion";
+        exp.innerHTML = `<td colspan="${colspan}"><div class="muted center" style="padding:14px">Loading…</div></td>`;
+        tr.after(exp);
+
+        try {
+          const html = await renderExpansion(tr.dataset.key);
+          exp.innerHTML = `<td colspan="${colspan}">${html}</td>`;
+        } catch (err) {
+          exp.innerHTML = `<td colspan="${colspan}"><div class="muted center" style="padding:14px">Failed to load: ${esc(err.message)}</div></td>`;
+        }
+      });
+    }
+
     // ---- Visitors page ----
 
     async function loadVisitors() {
@@ -1079,30 +1187,83 @@
           body.innerHTML = `<tr><td colspan="8" class="muted center">No visitors match this filter.</td></tr>`;
           return;
         }
+        // Cache full rows so expansion reads from memory (list already has the whole doc).
+        visitorCache.clear();
+        for (const v of res.items) visitorCache.set(v.key, v);
         body.innerHTML = res.items.map(renderVisitorRow).join("");
       } catch (err) {
-        body.innerHTML = `<tr><td colspan="8" class="muted center">Failed to load: ${err.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="8" class="muted center">Failed to load: ${esc(err.message)}</td></tr>`;
       }
     }
 
+    const visitorCache = new Map();
+
     function renderVisitorRow(v) {
+      const name = [v.first_name, v.last_name].filter(Boolean).join(" ");
       const clicks = [
-        clickBadge("gclid", v.has_gclid),
-        clickBadge("fbclid", v.has_fbclid),
-        clickBadge("fbc", v.has_fbc),
-        clickBadge("fbp", v.has_fbp),
+        clickBadge("gclid", Boolean(v.gclid)),
+        clickBadge("fbclid", Boolean(v.fbclid)),
+        clickBadge("fbc", Boolean(v.fbc)),
+        clickBadge("fbp", Boolean(v.fbp)),
       ].join(" · ");
       return `
-        <tr>
+        <tr class="row-main" data-key="${esc(v.key)}">
+          <td class="muted"><span class="chevron"></span></td>
           <td>${fmtDateTime(v.last_seen_at)}</td>
-          <td class="mono">${v.key_prefix}…</td>
-          <td class="mono">${v.shopify_customer_id ?? "—"}</td>
-          <td class="mono">${v.phone_hash_prefix ?? "—"}</td>
-          <td class="mono">${v.email_hash_prefix ?? "—"}</td>
+          <td>${esc(name) || "—"}</td>
+          <td class="mono">${esc(v.phone) || "—"}</td>
+          <td class="mono">${esc(v.email) || "—"}</td>
+          <td class="mono">${esc(v.shopify_customer_id) || "—"}</td>
           <td>${clicks}</td>
-          <td class="mono">${(v.touchpoints || []).join(", ") || "—"}</td>
-          <td class="mono">${v.client_ip ?? "—"}</td>
+          <td class="mono">${esc(v.client_ip) || "—"}</td>
         </tr>
+      `;
+    }
+
+    function renderVisitorExpansion(key) {
+      const v = visitorCache.get(key);
+      if (!v) return `<div class="muted center" style="padding:14px">Visitor not found.</div>`;
+      const name = [v.first_name, v.last_name].filter(Boolean).join(" ");
+      const addr = [v.city, v.state, v.zip, v.country].filter(Boolean).join(", ");
+      return `
+        <div class="expansion-card">
+          <div class="expansion-section">
+            <h4>Identity</h4>
+            ${kv("Name", name)}
+            ${kv("Phone", v.phone)}
+            ${kv("Email", v.email)}
+            ${kv("Address", addr)}
+            ${kv("Shopify ID", v.shopify_customer_id)}
+            ${kv("User ID", v.user_id)}
+          </div>
+          <div class="expansion-section">
+            <h4>Click IDs</h4>
+            ${kv("gclid", v.gclid)}
+            ${kv("fbclid", v.fbclid)}
+            ${kv("_fbc", v.fbc)}
+            ${kv("_fbp", v.fbp)}
+            ${kv("gclid at", v.gclid_captured_at ? fmtDateTime(v.gclid_captured_at) : null)}
+            ${kv("fbclid at", v.fbclid_captured_at ? fmtDateTime(v.fbclid_captured_at) : null)}
+          </div>
+          <div class="expansion-section">
+            <h4>Device & Behavior</h4>
+            ${kv("IP", v.client_ip)}
+            ${kv("User-Agent", v.client_user_agent)}
+            ${kv("Touchpoints", (v.touchpoints || []).join(", ") || null)}
+            ${kv("Cookie IDs", (v.cookie_ids || []).join(", ") || null)}
+            ${kv("First seen", v.first_seen_at ? fmtDateTime(v.first_seen_at) : null)}
+            ${kv("Last seen", v.last_seen_at ? fmtDateTime(v.last_seen_at) : null)}
+          </div>
+          <div class="expansion-section">
+            <h4>Hashes (sent to Meta/Google)</h4>
+            ${kv("Phone (Meta)", v.hashes?.phone_meta, "hash")}
+            ${kv("Phone (Google)", v.hashes?.phone_google, "hash")}
+            ${kv("Email", v.hashes?.email, "hash")}
+            ${kv("First name", v.hashes?.first_name, "hash")}
+            ${kv("Last name", v.hashes?.last_name, "hash")}
+            ${kv("Country", v.hashes?.country, "hash")}
+          </div>
+        </div>
       `;
     }
 
@@ -1111,7 +1272,7 @@
     async function loadConversions() {
       const body = $("#conversions-body");
       const countEl = $("#conversions-count");
-      body.innerHTML = `<tr><td colspan="7" class="muted center">Loading…</td></tr>`;
+      body.innerHTML = `<tr><td colspan="8" class="muted center">Loading…</td></tr>`;
       countEl.textContent = "—";
 
       const params = buildRangeQuery("conversions");
@@ -1128,12 +1289,12 @@
 
         countEl.textContent = `${filtered.length} conversion${filtered.length === 1 ? "" : "s"}`;
         if (filtered.length === 0) {
-          body.innerHTML = `<tr><td colspan="7" class="muted center">No conversions match this filter.</td></tr>`;
+          body.innerHTML = `<tr><td colspan="8" class="muted center">No conversions match this filter.</td></tr>`;
           return;
         }
         body.innerHTML = filtered.map(renderConversionRow).join("");
       } catch (err) {
-        body.innerHTML = `<tr><td colspan="7" class="muted center">Failed to load: ${err.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="8" class="muted center">Failed to load: ${esc(err.message)}</td></tr>`;
       }
     }
 
@@ -1144,9 +1305,10 @@
         csv_upload: "CSV",
       }[c.source] || c.source || "—";
       return `
-        <tr>
+        <tr class="row-main" data-key="${esc(c.order_id)}">
+          <td class="muted"><span class="chevron"></span></td>
           <td>${fmtDateTime(c.created_at)}</td>
-          <td class="mono">${c.order_id ?? "—"}</td>
+          <td class="mono">${esc(c.order_id) || "—"}</td>
           <td>${sourceLabel}</td>
           <td>${fmtMoney(c.amount, c.currency)}</td>
           <td>${statusPill(c.meta_status)}</td>
@@ -1156,10 +1318,60 @@
       `;
     }
 
+    async function renderConversionExpansion(orderId) {
+      const c = await api(`/admin/api/conversions/${encodeURIComponent(orderId)}`);
+      const addr = [c.city_hash, c.state_hash, c.zip_hash, c.country_hash].filter(Boolean).length;
+      return `
+        <div class="expansion-card">
+          <div class="expansion-section">
+            <h4>Order</h4>
+            ${kv("Order ID", c.order_id)}
+            ${kv("Source", c.source)}
+            ${kv("Amount", fmtMoney(c.order_amount, c.currency))}
+            ${kv("Event time", c.event_time ? fmtDateTime(c.event_time) : null)}
+            ${kv("Action source", c.action_source)}
+          </div>
+          <div class="expansion-section">
+            <h4>Click IDs</h4>
+            ${kv("gclid", c.gclid)}
+            ${kv("_fbc", c.fbc)}
+            ${kv("_fbp", c.fbp)}
+            ${kv("IP", c.client_ip_address)}
+            ${kv("User-Agent", c.client_user_agent)}
+          </div>
+          <div class="expansion-section">
+            <h4>Meta CAPI</h4>
+            ${kv("Status", c.meta_capi?.status)}
+            ${kv("Retries", c.meta_capi?.retries ?? 0)}
+            ${kv("Sent at", c.meta_capi?.sent_at ? fmtDateTime(c.meta_capi.sent_at) : null)}
+            ${kv("HTTP", c.meta_capi?.response_code)}
+            ${kv("Error", c.meta_capi?.error)}
+          </div>
+          <div class="expansion-section">
+            <h4>Google Ads</h4>
+            ${kv("Status", c.google_ads?.status)}
+            ${kv("Retries", c.google_ads?.retries ?? 0)}
+            ${kv("Sent at", c.google_ads?.sent_at ? fmtDateTime(c.google_ads.sent_at) : null)}
+            ${kv("HTTP", c.google_ads?.response_code)}
+            ${kv("Error", c.google_ads?.error)}
+          </div>
+          <div class="expansion-section">
+            <h4>Hashes (sent)</h4>
+            ${kv("Phone (Meta)", c.phone_meta, "hash")}
+            ${kv("Phone (Google)", c.phone_google, "hash")}
+            ${kv("Email", c.email_hash, "hash")}
+            ${kv("Address fields", addr ? `${addr} set` : null, "hash")}
+          </div>
+        </div>
+      `;
+    }
+
     // ---- Wire controls ----
 
     wireRangeToggle("visitors");
     wireRangeToggle("conversions");
+    wireExpand("#visitors-body", 8, (key) => Promise.resolve(renderVisitorExpansion(key)));
+    wireExpand("#conversions-body", 8, (orderId) => renderConversionExpansion(orderId));
 
     $("#visitors-search").addEventListener("input", debounce(loadVisitors, 350));
     $("#conversions-search").addEventListener("input", debounce(loadConversions, 200));
