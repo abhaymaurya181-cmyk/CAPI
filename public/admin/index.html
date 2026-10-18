@@ -612,6 +612,113 @@
       letter-spacing: 0.08em;
       font-weight: 600;
     }
+
+    .page-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .page-header h2 {
+      font-family: 'Abhaya Libre', serif;
+      color: var(--brand);
+      font-size: 22px;
+      font-weight: 600;
+      margin: 0;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .toolbar input,
+    .toolbar select {
+      padding: 8px 12px;
+      border: 1px solid #e5dcd8;
+      border-radius: 6px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+    }
+    .toolbar input[type="search"] {
+      flex: 1 1 300px;
+      min-width: 240px;
+    }
+    .toolbar input:focus,
+    .toolbar select:focus {
+      outline: none;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 2px rgba(90, 65, 63, 0.12);
+    }
+    .btn-ghost {
+      padding: 8px 14px;
+      background: #fff;
+      border: 1px solid var(--brand);
+      color: var(--brand);
+      border-radius: 6px;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 500;
+    }
+    .btn-ghost:hover {
+      background: var(--brand-tint);
+    }
+
+    .table-wrap {
+      background: #fff;
+      border: 1px solid #ece5e2;
+      border-radius: 8px;
+      overflow: auto;
+      max-height: calc(100vh - 240px);
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .data-table thead th {
+      position: sticky;
+      top: 0;
+      background: #faf8f7;
+      color: var(--brand);
+      text-align: left;
+      padding: 10px 14px;
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid #ece5e2;
+    }
+    .data-table tbody td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f3eeec;
+      vertical-align: middle;
+    }
+    .data-table tbody tr:hover {
+      background: #faf8f7;
+    }
+    .center { text-align: center; }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .pill-success { background: #e4f3eb; color: var(--success); }
+    .pill-failed  { background: #fde7e9; color: var(--destructive); }
+    .pill-pending { background: #fff2d9; color: #a06400; }
+    .pill-retrying { background: #fff2d9; color: #a06400; }
+    .pill-none    { background: #f1ebe9; color: var(--muted); }
+    .badge-set    { color: var(--success); font-weight: 600; }
+    .badge-unset  { color: var(--muted); }
   </style>
 </head>
 
@@ -662,18 +769,93 @@
     <div class="layout">
       <aside class="sidebar">
         <nav>
-          <button class="active" data-tab="dashboard">Dashboard</button>
-          <button data-tab="lookup">Order lookup</button>
-          <button data-tab="upload">Upload offline sales</button>
-          <button data-tab="failures">Failures</button>
+          <button class="active" data-tab="visitors">Visitors</button>
+          <button data-tab="conversions">Conversions</button>
         </nav>
       </aside>
       <main>
 
-        <section id="tab-dashboard" class="tab"></section>
-        <section id="tab-lookup" class="tab hidden"></section>
-        <section id="tab-upload" class="tab hidden"></section>
-        <section id="tab-failures" class="tab hidden"></section>
+        <section id="tab-visitors" class="tab">
+          <div class="page-header">
+            <h2>Visitors</h2>
+            <div class="muted" id="visitors-count">—</div>
+          </div>
+          <div class="toolbar">
+            <input type="search" id="visitors-search" placeholder="Search by phone, email, or Shopify customer ID" autocomplete="off" />
+            <select id="visitors-range">
+              <option value="today">Today</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d" selected>Last 30 days</option>
+              <option value="all">All time</option>
+              <option value="custom">Custom range…</option>
+            </select>
+            <input type="date" id="visitors-from" class="hidden" />
+            <input type="date" id="visitors-to" class="hidden" />
+            <button class="btn-ghost" id="visitors-refresh" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Last seen</th>
+                  <th>Visitor key</th>
+                  <th>Shopify ID</th>
+                  <th>Phone #</th>
+                  <th>Email #</th>
+                  <th>Click IDs</th>
+                  <th>Touchpoints</th>
+                  <th>Client IP</th>
+                </tr>
+              </thead>
+              <tbody id="visitors-body">
+                <tr><td colspan="8" class="muted center">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="tab-conversions" class="tab hidden">
+          <div class="page-header">
+            <h2>Conversions</h2>
+            <div class="muted" id="conversions-count">—</div>
+          </div>
+          <div class="toolbar">
+            <input type="search" id="conversions-search" placeholder="Search by order ID" autocomplete="off" />
+            <select id="conversions-range">
+              <option value="today">Today</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d" selected>Last 30 days</option>
+              <option value="all">All time</option>
+              <option value="custom">Custom range…</option>
+            </select>
+            <input type="date" id="conversions-from" class="hidden" />
+            <input type="date" id="conversions-to" class="hidden" />
+            <select id="conversions-status">
+              <option value="">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="failed">Failed / retrying</option>
+            </select>
+            <button class="btn-ghost" id="conversions-refresh" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Created</th>
+                  <th>Order ID</th>
+                  <th>Source</th>
+                  <th>Amount</th>
+                  <th>Meta</th>
+                  <th>Google</th>
+                  <th>Click IDs</th>
+                </tr>
+              </thead>
+              <tbody id="conversions-body">
+                <tr><td colspan="7" class="muted center">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
       </main>
     </div>
@@ -751,8 +933,7 @@
         const { token: newToken } = await res.json();
         token = newToken;
         localStorage.setItem(TOKEN_KEY, token);
-        showApp();
-        loadDashboard();
+        bootApp();
       } catch (_err) {
         err.textContent = "Invalid username or password";
         err.classList.remove("hidden");
@@ -799,14 +980,200 @@
         const tab = b.dataset.tab;
         $$(".tab").forEach((t) => t.classList.add("hidden"));
         $("#tab-" + tab).classList.remove("hidden");
+        if (tab === "visitors") loadVisitors();
+        if (tab === "conversions") loadConversions();
       });
     });
 
-    // Page content was stripped — tab sections are empty for now.
-    // When we wire real page UIs, their handlers go here.
+    // ---- shared helpers ----
+
+    function debounce(fn, ms) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+      };
+    }
+
+    function fmtDateTime(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, {
+        year: "numeric", month: "short", day: "2-digit",
+        hour: "2-digit", minute: "2-digit",
+      });
+    }
+
+    function fmtMoney(amount, currency) {
+      if (amount == null) return "—";
+      try {
+        return new Intl.NumberFormat(undefined, {
+          style: "currency", currency: currency || "INR", maximumFractionDigits: 0,
+        }).format(amount);
+      } catch {
+        return `${currency || ""} ${amount}`;
+      }
+    }
+
+    function statusPill(status) {
+      if (!status) return `<span class="pill pill-none">—</span>`;
+      const cls = {
+        success: "pill-success",
+        failed: "pill-failed",
+        pending: "pill-pending",
+        retrying: "pill-retrying",
+      }[status] || "pill-none";
+      return `<span class="pill ${cls}">${status}</span>`;
+    }
+
+    function clickBadge(label, present) {
+      return `<span class="${present ? "badge-set" : "badge-unset"}">${label}</span>`;
+    }
+
+    function buildRangeQuery(prefix) {
+      const range = $(`#${prefix}-range`).value;
+      const params = new URLSearchParams();
+      if (range === "custom") {
+        const from = $(`#${prefix}-from`).value;
+        const to = $(`#${prefix}-to`).value;
+        if (from) params.set("from", from);
+        if (to) params.set("to", to);
+      } else {
+        params.set("range", range);
+      }
+      return params;
+    }
+
+    function wireRangeToggle(prefix) {
+      const sel = $(`#${prefix}-range`);
+      const from = $(`#${prefix}-from`);
+      const to = $(`#${prefix}-to`);
+      sel.addEventListener("change", () => {
+        const custom = sel.value === "custom";
+        from.classList.toggle("hidden", !custom);
+        to.classList.toggle("hidden", !custom);
+        if (prefix === "visitors") loadVisitors();
+        else loadConversions();
+      });
+      from.addEventListener("change", () => prefix === "visitors" ? loadVisitors() : loadConversions());
+      to.addEventListener("change", () => prefix === "visitors" ? loadVisitors() : loadConversions());
+    }
+
+    // ---- Visitors page ----
+
+    async function loadVisitors() {
+      const body = $("#visitors-body");
+      const countEl = $("#visitors-count");
+      body.innerHTML = `<tr><td colspan="8" class="muted center">Loading…</td></tr>`;
+      countEl.textContent = "—";
+
+      const params = buildRangeQuery("visitors");
+      const search = $("#visitors-search").value.trim();
+      if (search) params.set("search", search);
+      params.set("limit", "100");
+
+      try {
+        const res = await api("/admin/api/visitors?" + params.toString());
+        countEl.textContent = `${res.count} visitor${res.count === 1 ? "" : "s"}`;
+        if (res.count === 0) {
+          body.innerHTML = `<tr><td colspan="8" class="muted center">No visitors match this filter.</td></tr>`;
+          return;
+        }
+        body.innerHTML = res.items.map(renderVisitorRow).join("");
+      } catch (err) {
+        body.innerHTML = `<tr><td colspan="8" class="muted center">Failed to load: ${err.message}</td></tr>`;
+      }
+    }
+
+    function renderVisitorRow(v) {
+      const clicks = [
+        clickBadge("gclid", v.has_gclid),
+        clickBadge("fbclid", v.has_fbclid),
+        clickBadge("fbc", v.has_fbc),
+        clickBadge("fbp", v.has_fbp),
+      ].join(" · ");
+      return `
+        <tr>
+          <td>${fmtDateTime(v.last_seen_at)}</td>
+          <td class="mono">${v.key_prefix}…</td>
+          <td class="mono">${v.shopify_customer_id ?? "—"}</td>
+          <td class="mono">${v.phone_hash_prefix ?? "—"}</td>
+          <td class="mono">${v.email_hash_prefix ?? "—"}</td>
+          <td>${clicks}</td>
+          <td class="mono">${(v.touchpoints || []).join(", ") || "—"}</td>
+          <td class="mono">${v.client_ip ?? "—"}</td>
+        </tr>
+      `;
+    }
+
+    // ---- Conversions page ----
+
+    async function loadConversions() {
+      const body = $("#conversions-body");
+      const countEl = $("#conversions-count");
+      body.innerHTML = `<tr><td colspan="7" class="muted center">Loading…</td></tr>`;
+      countEl.textContent = "—";
+
+      const params = buildRangeQuery("conversions");
+      const status = $("#conversions-status").value;
+      if (status) params.set("status", status);
+      params.set("limit", "100");
+
+      try {
+        const res = await api("/admin/api/conversions?" + params.toString());
+        const search = $("#conversions-search").value.trim().toLowerCase();
+        const filtered = search
+          ? res.items.filter((it) => (it.order_id || "").toLowerCase().includes(search))
+          : res.items;
+
+        countEl.textContent = `${filtered.length} conversion${filtered.length === 1 ? "" : "s"}`;
+        if (filtered.length === 0) {
+          body.innerHTML = `<tr><td colspan="7" class="muted center">No conversions match this filter.</td></tr>`;
+          return;
+        }
+        body.innerHTML = filtered.map(renderConversionRow).join("");
+      } catch (err) {
+        body.innerHTML = `<tr><td colspan="7" class="muted center">Failed to load: ${err.message}</td></tr>`;
+      }
+    }
+
+    function renderConversionRow(c) {
+      const sourceLabel = {
+        shopify_online: "Shopify",
+        ornaverse_offline: "OrnaVerse",
+        csv_upload: "CSV",
+      }[c.source] || c.source || "—";
+      return `
+        <tr>
+          <td>${fmtDateTime(c.created_at)}</td>
+          <td class="mono">${c.order_id ?? "—"}</td>
+          <td>${sourceLabel}</td>
+          <td>${fmtMoney(c.amount, c.currency)}</td>
+          <td>${statusPill(c.meta_status)}</td>
+          <td>${statusPill(c.google_status)}</td>
+          <td>${clickBadge("gclid", c.has_gclid)} · ${clickBadge("fbc", c.has_fbc)}</td>
+        </tr>
+      `;
+    }
+
+    // ---- Wire controls ----
+
+    wireRangeToggle("visitors");
+    wireRangeToggle("conversions");
+
+    $("#visitors-search").addEventListener("input", debounce(loadVisitors, 350));
+    $("#conversions-search").addEventListener("input", debounce(loadConversions, 200));
+    $("#conversions-status").addEventListener("change", loadConversions);
+    $("#visitors-refresh").addEventListener("click", loadVisitors);
+    $("#conversions-refresh").addEventListener("click", loadConversions);
+
+    function bootApp() {
+      showApp();
+      loadVisitors();
+    }
 
     if (token) {
-      api("/admin/api/stats").then(() => showApp()).catch(() => logout());
+      api("/admin/api/stats").then(bootApp).catch(() => logout());
     } else {
       showLogin();
     }

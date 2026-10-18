@@ -6,9 +6,11 @@ import {
   visitorsCol,
   type ConversionLog,
   type SendStatus,
+  type Visitor,
 } from "../lib/firestore.js";
 import { requireBearer } from "../lib/auth.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
+import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
 
 const BAD_STATUSES: SendStatus[] = ["pending", "failed", "retrying"];
 
@@ -238,4 +240,63 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
       return reply.send({ accepted: true });
     }
   );
+
+  app.get<{
+    Querystring: { search?: string; range?: string; from?: string; to?: string; limit?: string };
+  }>("/admin/api/visitors", async (req, reply) => {
+    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+
+    const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
+    const search = (req.query.search ?? "").trim();
+
+    let q: FirebaseFirestore.Query = visitorsCol;
+
+    if (search) {
+      // Exact-match search: hash the raw input the same way identify does, so
+      // the stored hash lines up. Three auto-detected shapes: email (contains
+      // @), phone (digits with optional +), or a plain string treated as the
+      // Shopify customer id. No composite index is needed for an equality +
+      // single orderBy on the same collection.
+      if (search.includes("@")) {
+        const h = hashEmail(search);
+        if (!h) return reply.send({ items: [], count: 0, matched: "email_invalid" });
+        q = q.where("email_hash", "==", h);
+      } else if (/^[+\d\s-]+$/.test(search)) {
+        const h = hashPhoneForMeta(search);
+        if (!h) return reply.send({ items: [], count: 0, matched: "phone_invalid" });
+        q = q.where("phone_meta", "==", h);
+      } else {
+        q = q.where("shopify_customer_id", "==", search);
+      }
+      q = q.limit(limit);
+    } else {
+      const range = parseRange(req.query);
+      if (range.from) q = q.where("last_seen_at", ">=", range.from);
+      if (range.to) q = q.where("last_seen_at", "<=", range.to);
+      q = q.orderBy("last_seen_at", "desc").limit(limit);
+    }
+
+    const snap = await q.get();
+    const items = snap.docs.map((d) => {
+      const v = d.data() as Visitor;
+      return {
+        key: d.id,
+        key_prefix: d.id.slice(0, 10),
+        phone_hash_prefix: v.phone_meta ? v.phone_meta.slice(0, 10) : null,
+        email_hash_prefix: v.email_hash ? v.email_hash.slice(0, 10) : null,
+        shopify_customer_id: v.shopify_customer_id ?? null,
+        user_id: v.user_id ?? null,
+        has_gclid: Boolean(v.click_ids?.gclid?.value),
+        has_fbclid: Boolean(v.click_ids?.fbclid?.value),
+        has_fbc: Boolean(v.fbc),
+        has_fbp: Boolean(v.fbp),
+        cookie_ids_count: v.cookie_ids?.length ?? 0,
+        touchpoints: v.touchpoints ?? [],
+        first_seen_at: v.first_seen_at?.toDate().toISOString() ?? null,
+        last_seen_at: v.last_seen_at?.toDate().toISOString() ?? null,
+        client_ip: v.client_ip_address ?? null,
+      };
+    });
+    return reply.send({ items, count: items.length });
+  });
 }
