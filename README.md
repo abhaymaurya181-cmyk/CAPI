@@ -1,6 +1,6 @@
 # lucira-capi
 
-Server-side conversion tracking for Lucira Jewellery. Sends online + offline sales to Meta Conversions API and Google Ads.
+Server-side offline conversion tracking for Lucira Jewellery. Matches store (OrnaVerse) sales to website visitors who came from Meta / Google ads, and sends them to Meta Conversions API and Google Ads.
 
 ## Architecture
 
@@ -14,11 +14,10 @@ Server-side conversion tracking for Lucira Jewellery. Sends online + offline sal
 | Route | Purpose |
 |---|---|
 | `POST /identify` | GTM tag posts user identity + click IDs |
-| `POST /webhook/shopify` | Shopify `orders/create` webhook (HMAC verified) |
 | `POST /webhook/ornaverse` | OrnaVerse offline sales |
 | `POST /upload/csv` | Admin CSV upload fallback for offline sales |
 | `GET /admin/*` | Admin UI (auth required) |
-| `GET /healthz` | Health check |
+| `GET /health` | Health check |
 
 ## Dev
 

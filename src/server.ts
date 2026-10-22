@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import identifyRoute from "./routes/identify.js";
-import shopifyWebhookRoute from "./routes/webhook-shopify.js";
 import ornaverseWebhookRoute from "./routes/webhook-ornaverse.js";
 import uploadCsvRoute from "./routes/upload-csv.js";
 import retrySweepRoute from "./routes/retry-sweep.js";
@@ -29,7 +28,7 @@ const app = Fastify({
   trustProxy: true,
 });
 
-// Capture raw body for HMAC verification (Shopify, OrnaVerse webhooks).
+// Capture raw body for webhook signature verification (OrnaVerse).
 app.addContentTypeParser(
   "application/json",
   { parseAs: "buffer" },
@@ -70,7 +69,6 @@ app.get("/t.js", async (_req, reply) => {
 });
 
 await app.register(identifyRoute);
-await app.register(shopifyWebhookRoute);
 await app.register(ornaverseWebhookRoute);
 await app.register(adminApiRoute);
 await app.register(uploadCsvRoute);

@@ -106,7 +106,7 @@ export interface Visitor {
   consent?: VisitorConsent;
 }
 
-export type ConversionSource = "shopify_online" | "ornaverse_offline" | "csv_upload";
+export type ConversionSource = "ornaverse_offline" | "csv_upload";
 export type SendStatus = "pending" | "success" | "failed" | "retrying";
 
 export interface SenderResult {

@@ -25,7 +25,7 @@ gcloud artifacts repositories create lucira-capi \
 gcloud firestore databases create --location="$REGION"
 
 # Secrets (paste values when prompted; use `echo -n <val> | gcloud secrets create ... --data-file=-` for scripted)
-for s in ADMIN_TOKEN INTERNAL_TOKEN SHOPIFY_WEBHOOK_SECRET \
+for s in ADMIN_TOKEN INTERNAL_TOKEN \
          META_PIXEL_ID META_CAPI_ACCESS_TOKEN \
          GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_DEVELOPER_TOKEN \
          GOOGLE_ADS_LOGIN_CUSTOMER_ID GOOGLE_ADS_CLIENT_ID \
@@ -37,7 +37,7 @@ done
 # Grant Cloud Run service account access to secrets + Firestore.
 # Replace PROJECT_NUMBER (see `gcloud projects describe $PROJECT_ID`).
 SA="PROJECT_NUMBER-compute@developer.gserviceaccount.com"
-for s in ADMIN_TOKEN INTERNAL_TOKEN SHOPIFY_WEBHOOK_SECRET \
+for s in ADMIN_TOKEN INTERNAL_TOKEN \
          META_PIXEL_ID META_CAPI_ACCESS_TOKEN \
          GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_DEVELOPER_TOKEN \
          GOOGLE_ADS_LOGIN_CUSTOMER_ID GOOGLE_ADS_CLIENT_ID \
@@ -68,7 +68,6 @@ PROJECT_ID="$PROJECT_ID" bash cloud-run.sh
 
 First deploy prints the service URL. Use it to:
 
-- Set the Shopify webhook URL in Lucira's custom app → `<url>/webhook/shopify`
 - Point the DNS CNAME `track.lucirajewelry.com` → the service URL via Cloud Run domain mapping (`gcloud run domain-mappings create`)
 - Open `<url>/admin/` and sign in with `ADMIN_TOKEN`
 
@@ -86,11 +85,8 @@ Default: every 5 minutes, Asia/Kolkata timezone. Change `SCHEDULE` env var to ad
 SERVICE_URL="$(gcloud run services describe lucira-capi --region=$REGION --format='value(status.url)')"
 
 # Health
-curl -s "$SERVICE_URL/healthz"
+curl -s "$SERVICE_URL/health"
 
 # Admin stats (needs ADMIN_TOKEN)
 curl -s -H "Authorization: Bearer <ADMIN_TOKEN>" "$SERVICE_URL/admin/api/stats"
-
-# Shopify webhook (will 401 — HMAC-signed test is in docs)
-curl -s -X POST "$SERVICE_URL/webhook/shopify" -H "Content-Type: application/json" -d '{}'
 ```
