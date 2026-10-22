@@ -99,6 +99,47 @@ export function hashCountry(raw: string | null | undefined): string | null {
   return /^[a-z]{2}$/.test(cleaned) ? sha256(cleaned) : null;
 }
 
+/**
+ * Date of birth → Meta's YYYYMMDD. Accepts YYYY-MM-DD / YYYYMMDD and the
+ * Indian DD/MM/YYYY or DD-MM-YYYY. Year must be 1900..current year.
+ */
+export function normalizeDob(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  let y: string, m: string, d: string;
+  let match = s.match(/^(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})$/);
+  if (match) {
+    [, y, m, d] = match;
+  } else if ((match = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/))) {
+    [, d, m, y] = match;
+  } else {
+    return null;
+  }
+  const year = Number(y), month = Number(m), day = Number(d);
+  if (year < 1900 || year > new Date().getUTCFullYear()) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return `${year}${String(month).padStart(2, "0")}${String(day).padStart(2, "0")}`;
+}
+
+export function hashDob(raw: string | null | undefined): string | null {
+  const normalized = normalizeDob(raw);
+  return normalized ? sha256(normalized) : null;
+}
+
+/** Gender → Meta's single lowercase initial: "m" or "f". */
+export function normalizeGender(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const g = raw.trim().toLowerCase();
+  if (g === "m" || g === "male") return "m";
+  if (g === "f" || g === "female") return "f";
+  return null;
+}
+
+export function hashGender(raw: string | null | undefined): string | null {
+  const normalized = normalizeGender(raw);
+  return normalized ? sha256(normalized) : null;
+}
+
 export interface HashedIdentity {
   phone_meta: string | null;
   phone_google: string | null;

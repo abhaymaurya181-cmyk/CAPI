@@ -5,9 +5,12 @@ import {
   getConversion,
   visitorsCol,
   type ConversionLog,
+  type GoogleClick,
+  type MetaClick,
   type SendStatus,
   type Visitor,
 } from "../lib/firestore.js";
+import { clickMode } from "../lib/click-ids.js";
 import { requireBearer } from "../lib/auth.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
 import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
@@ -196,6 +199,8 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
           google_status: log.google_ads?.status,
           google_retries: log.google_ads?.retries,
           has_gclid: Boolean(log.gclid),
+          has_gbraid: Boolean(log.gbraid),
+          has_wbraid: Boolean(log.wbraid),
           has_fbc: Boolean(log.fbc),
         };
       });
@@ -292,6 +297,15 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   );
 }
 
+function iso(t?: Timestamp): string | null {
+  return t?.toDate().toISOString() ?? null;
+}
+
+function serializeClick(c?: MetaClick | GoogleClick) {
+  if (!c) return null;
+  return { ...c, captured_at: iso(c.captured_at) };
+}
+
 function serializeVisitor(key: string, v: Visitor) {
   return {
     key,
@@ -307,14 +321,26 @@ function serializeVisitor(key: string, v: Visitor) {
     country: v.raw_country ?? null,
     shopify_customer_id: v.shopify_customer_id ?? null,
     user_id: v.user_id ?? null,
-    // Click IDs
-    gclid: v.click_ids?.gclid?.value ?? null,
-    fbclid: v.click_ids?.fbclid?.value ?? null,
-    fbc: v.fbc ?? null,
+    dob: v.raw_dob ?? null,
+    gender: v.raw_gender ?? null,
+    // Click IDs: first + last per platform; click_mode says which one is sent.
+    click_mode: clickMode(),
+    meta_click: {
+      first: serializeClick(v.click_ids?.meta?.first),
+      last: serializeClick(v.click_ids?.meta?.last),
+    },
+    google_click: {
+      first: serializeClick(v.click_ids?.google?.first),
+      last: serializeClick(v.click_ids?.google?.last),
+    },
     fbp: v.fbp ?? null,
-    gclid_captured_at: v.click_ids?.gclid?.captured_at?.toDate().toISOString() ?? null,
-    fbclid_captured_at: v.click_ids?.fbclid?.captured_at?.toDate().toISOString() ?? null,
+    fbp_captured_at: iso(v.fbp_captured_at),
+    gcl_au: v.gcl_au ?? null,
+    ga_client_id: v.ga_client_id ?? null,
+    external_id: v.external_id ?? null,
+    external_id_source: v.external_id_source ?? null,
     // Cookie / device
+    lcid: v.lcid ?? null,
     cookie_ids: v.cookie_ids ?? [],
     client_ip: v.client_ip_address ?? null,
     client_user_agent: v.client_user_agent ?? null,
@@ -326,6 +352,8 @@ function serializeVisitor(key: string, v: Visitor) {
       ? {
           marketing: v.consent.marketing,
           version: v.consent.version,
+          ad_user_data: v.consent.ad_user_data ?? null,
+          ad_personalization: v.consent.ad_personalization ?? null,
           timestamp: v.consent.timestamp?.toDate().toISOString() ?? null,
         }
       : null,

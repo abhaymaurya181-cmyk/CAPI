@@ -8,6 +8,16 @@
   var GCLID_COOKIE = "_lucira_gclid";
   var WBRAID_COOKIE = "_lucira_wbraid";
   var GBRAID_COOKIE = "_lucira_gbraid";
+  // Click time (ms) for each Google id, and landing context per platform,
+  // written only when a click param is in the URL.
+  var CLICK_AT_SUFFIX = "_at";
+  var GOOGLE_LANDING_COOKIE = "_lucira_g_lp";
+  var META_LANDING_COOKIE = "_lucira_m_lp";
+  // Cookies written by Google's own tag (gtag / GTM conversion linker).
+  var GCL_AW_COOKIE = "_gcl_aw";
+  var GCL_GB_COOKIE = "_gcl_gb";
+  var GCL_AU_COOKIE = "_gcl_au";
+  var GA_COOKIE = "_ga";
 
   var EVENT_MAP = {
     page_view: "page_view",
@@ -69,27 +79,82 @@
     return m ? decodeURIComponent(m[1]) : null;
   }
 
-  function captureClickIds() {
-    var now = Math.floor(Date.now() / 1000);
+  // fbclid is the 4th dot-separated part of fb.{subdomain}.{time}.{fbclid}.
+  function fbclidFromFbc(fbc) {
+    if (!fbc) return null;
+    var parts = fbc.split(".");
+    return parts.length >= 4 ? parts.slice(3).join(".") : null;
+  }
 
+  function landingInfo() {
+    var info = {
+      u: window.location.href.slice(0, 500),
+      r: (document.referrer || "").slice(0, 300)
+    };
+    var utm = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+    for (var i = 0; i < utm.length; i++) {
+      var v = getUrlParam(utm[i]);
+      if (v) info[utm[i]] = v.slice(0, 100);
+    }
+    return JSON.stringify(info);
+  }
+
+  function readJsonCookie(name) {
+    var raw = getCookie(name);
+    if (!raw) return undefined;
+    try {
+      var o = JSON.parse(raw);
+      return {
+        url: o.u || undefined,
+        referrer: o.r || undefined,
+        utm_source: o.utm_source,
+        utm_medium: o.utm_medium,
+        utm_campaign: o.utm_campaign,
+        utm_content: o.utm_content,
+        utm_term: o.utm_term
+      };
+    } catch (e) {
+      return undefined;
+    }
+  }
+
+  function captureClickIds() {
+    // Meta's fbc/fbp creation time is in milliseconds.
+    var nowMs = Date.now();
+
+    // A new fbclid in the URL is a new ad click: overwrite _fbc so it always
+    // carries the latest click (Meta's guidance), not the first one.
     var fbclid = getUrlParam("fbclid");
-    if (fbclid && !getCookie(FBC_COOKIE)) {
-      setCookie(FBC_COOKIE, "fb.1." + now + "." + fbclid, CLICK_COOKIE_MAX_AGE);
+    if (fbclid && fbclidFromFbc(getCookie(FBC_COOKIE)) !== fbclid) {
+      setCookie(FBC_COOKIE, "fb.1." + nowMs + "." + fbclid, CLICK_COOKIE_MAX_AGE);
+      setCookie(META_LANDING_COOKIE, landingInfo(), CLICK_COOKIE_MAX_AGE);
     }
 
     if (!getCookie(FBP_COOKIE)) {
       var rand = Math.floor(Math.random() * 2147483647);
-      setCookie(FBP_COOKIE, "fb.1." + now + "." + rand, CLICK_COOKIE_MAX_AGE);
+      setCookie(FBP_COOKIE, "fb.1." + nowMs + "." + rand, CLICK_COOKIE_MAX_AGE);
     }
 
-    var gclid = getUrlParam("gclid");
-    if (gclid) setCookie(GCLID_COOKIE, gclid, CLICK_COOKIE_MAX_AGE);
+    var googleIds = [
+      ["gclid", GCLID_COOKIE],
+      ["wbraid", WBRAID_COOKIE],
+      ["gbraid", GBRAID_COOKIE]
+    ];
+    var googleClick = false;
+    for (var i = 0; i < googleIds.length; i++) {
+      var value = getUrlParam(googleIds[i][0]);
+      if (value && getCookie(googleIds[i][1]) !== value) {
+        setCookie(googleIds[i][1], value, CLICK_COOKIE_MAX_AGE);
+        setCookie(googleIds[i][1] + CLICK_AT_SUFFIX, String(nowMs), CLICK_COOKIE_MAX_AGE);
+        googleClick = true;
+      }
+    }
+    if (googleClick) setCookie(GOOGLE_LANDING_COOKIE, landingInfo(), CLICK_COOKIE_MAX_AGE);
+  }
 
-    var wbraid = getUrlParam("wbraid");
-    if (wbraid) setCookie(WBRAID_COOKIE, wbraid, CLICK_COOKIE_MAX_AGE);
-
-    var gbraid = getUrlParam("gbraid");
-    if (gbraid) setCookie(GBRAID_COOKIE, gbraid, CLICK_COOKIE_MAX_AGE);
+  function numCookie(name) {
+    var v = getCookie(name);
+    return v && /^\d+$/.test(v) ? Number(v) : undefined;
   }
 
   function normalizeEventName(name) {
@@ -114,17 +179,27 @@
       city: d.city,
       state: d.state,
       country: d.country,
+      date_of_birth: d.date_of_birth || d.dob,
+      gender: d.gender,
       cookies: {
         gclid: getCookie(GCLID_COOKIE) || undefined,
-        fbclid: (function () {
-          var fbc = getCookie(FBC_COOKIE);
-          if (!fbc) return undefined;
-          var parts = fbc.split(".");
-          return parts.length === 4 ? parts[3] : undefined;
-        })(),
+        gclid_at: numCookie(GCLID_COOKIE + CLICK_AT_SUFFIX),
+        wbraid: getCookie(WBRAID_COOKIE) || undefined,
+        wbraid_at: numCookie(WBRAID_COOKIE + CLICK_AT_SUFFIX),
+        gbraid: getCookie(GBRAID_COOKIE) || undefined,
+        gbraid_at: numCookie(GBRAID_COOKIE + CLICK_AT_SUFFIX),
+        _gcl_aw: getCookie(GCL_AW_COOKIE) || undefined,
+        _gcl_gb: getCookie(GCL_GB_COOKIE) || undefined,
+        _gcl_au: getCookie(GCL_AU_COOKIE) || undefined,
+        _ga: getCookie(GA_COOKIE) || undefined,
+        fbclid: fbclidFromFbc(getCookie(FBC_COOKIE)) || undefined,
         _fbc: getCookie(FBC_COOKIE) || undefined,
         _fbp: getCookie(FBP_COOKIE) || undefined,
         client_cookie_id: getCookie("lcid") || undefined
+      },
+      landing: {
+        google: readJsonCookie(GOOGLE_LANDING_COOKIE),
+        meta: readJsonCookie(META_LANDING_COOKIE)
       },
       consent: d.consent,
       source_url: window.location.href,

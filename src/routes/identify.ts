@@ -4,16 +4,30 @@ import { z } from "zod";
 import {
   FieldValue,
   Timestamp,
+  getVisitor,
   upsertVisitor,
   visitorKey,
   type Visitor,
 } from "../lib/firestore.js";
 import {
+  hashDob,
+  hashGender,
   hashIdentity,
+  normalizeDob,
   normalizeEmail,
+  normalizeGender,
   normalizeName,
   normalizePhoneE164,
+  sha256,
 } from "../lib/hash.js";
+import {
+  googleClickFromCookies,
+  mergeGoogleClick,
+  mergeMetaClick,
+  metaClickFromCookies,
+  parseFbCookie,
+  parseGaClientId,
+} from "../lib/click-ids.js";
 
 const LCID_COOKIE = "lcid";
 const LCID_MAX_AGE = 63_072_000; // 2 years
@@ -45,6 +59,16 @@ function ensureLcid(req: FastifyRequest, reply: FastifyReply): string {
   return fresh;
 }
 
+const landingInfo = z.object({
+  url: z.string().max(1000).optional(),
+  referrer: z.string().max(1000).optional(),
+  utm_source: z.string().max(200).optional(),
+  utm_medium: z.string().max(200).optional(),
+  utm_campaign: z.string().max(200).optional(),
+  utm_content: z.string().max(200).optional(),
+  utm_term: z.string().max(200).optional(),
+});
+
 const identifyBody = z.object({
   event: z.enum([
     "page_view",
@@ -67,19 +91,38 @@ const identifyBody = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   country: z.string().optional(),
+  date_of_birth: z.string().optional(),
+  gender: z.string().optional(),
   cookies: z
     .object({
       gclid: z.string().optional(),
+      gclid_at: z.number().optional(),
+      wbraid: z.string().optional(),
+      wbraid_at: z.number().optional(),
+      gbraid: z.string().optional(),
+      gbraid_at: z.number().optional(),
+      _gcl_aw: z.string().optional(),
+      _gcl_gb: z.string().optional(),
+      _gcl_au: z.string().optional(),
+      _ga: z.string().optional(),
       fbclid: z.string().optional(),
       _fbc: z.string().optional(),
       _fbp: z.string().optional(),
       client_cookie_id: z.string().optional(),
     })
     .optional(),
+  landing: z
+    .object({
+      google: landingInfo.optional(),
+      meta: landingInfo.optional(),
+    })
+    .optional(),
   consent: z
     .object({
       marketing: z.boolean(),
       version: z.string(),
+      ad_user_data: z.enum(["granted", "denied"]).optional(),
+      ad_personalization: z.enum(["granted", "denied"]).optional(),
     })
     .optional(),
 });
@@ -127,7 +170,12 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
     }
 
     const now = Timestamp.now();
+    // Read the current doc so first_seen_at and the first click are kept,
+    // and a click we already have doesn't move `last`.
+    const existing = await getVisitor(key);
+
     const update: Partial<Visitor> = {
+      first_seen_at: existing?.first_seen_at ?? now,
       phone_meta: identity.phone_meta,
       phone_google: identity.phone_google,
       email_hash: identity.email,
@@ -148,6 +196,11 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
       raw_city: body.city?.trim() || undefined,
       raw_state: body.state?.trim() || undefined,
       raw_country: body.country?.trim().toUpperCase() || undefined,
+      raw_dob: normalizeDob(body.date_of_birth) ?? undefined,
+      raw_gender: normalizeGender(body.gender) ?? undefined,
+      dob_hash: hashDob(body.date_of_birth) ?? undefined,
+      gender_hash: hashGender(body.gender) ?? undefined,
+      lcid,
       user_id: body.user_id,
       shopify_customer_id: body.shopify_customer_id,
       client_ip_address: req.ip,
@@ -156,14 +209,47 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
       touchpoints: FieldValue.arrayUnion(body.event) as unknown as string[],
     };
 
-    const c = body.cookies;
-    const click_ids: NonNullable<Visitor["click_ids"]> = {};
-    if (c?.gclid) click_ids.gclid = { value: c.gclid, captured_at: now };
-    if (c?.fbclid) click_ids.fbclid = { value: c.fbclid, captured_at: now };
-    if (Object.keys(click_ids).length > 0) update.click_ids = click_ids;
+    // Meta external_id: the most stable id we have for this person. Upgrades
+    // from lcid to a customer id once one is known, never downgrades.
+    const extId =
+      (body.shopify_customer_id && { v: body.shopify_customer_id, s: "shopify_customer_id" as const }) ||
+      (body.user_id && { v: body.user_id, s: "user_id" as const }) ||
+      (!existing?.external_id && { v: lcid, s: "lcid" as const }) ||
+      null;
+    if (extId) {
+      update.external_id = sha256(extId.v.trim().toLowerCase());
+      update.external_id_source = extId.s;
+    }
 
-    if (c?._fbc) update.fbc = c._fbc;
-    if (c?._fbp) update.fbp = c._fbp;
+    const c = body.cookies;
+    const device = {
+      ip_address: req.ip,
+      user_agent: req.headers["user-agent"] ?? undefined,
+    };
+    const nowMs = now.toMillis();
+    const meta = mergeMetaClick(
+      existing,
+      metaClickFromCookies(c, body.landing?.meta, device, nowMs)
+    );
+    const google = mergeGoogleClick(
+      existing,
+      googleClickFromCookies(c, body.landing?.google, device, nowMs)
+    );
+    if (meta || google) {
+      update.click_ids = {
+        ...(meta ? { meta } : {}),
+        ...(google ? { google } : {}),
+      };
+    }
+
+    if (c?._fbp) {
+      update.fbp = c._fbp;
+      const at = parseFbCookie(c._fbp).at;
+      if (at) update.fbp_captured_at = Timestamp.fromMillis(at);
+    }
+    if (c?._gcl_au) update.gcl_au = c._gcl_au;
+    const gaClientId = parseGaClientId(c?._ga);
+    if (gaClientId) update.ga_client_id = gaClientId;
     const cookieIds = Array.from(
       new Set([lcid, c?.client_cookie_id].filter(Boolean) as string[])
     );
@@ -176,6 +262,8 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
         marketing: body.consent.marketing,
         timestamp: now,
         version: body.consent.version,
+        ad_user_data: body.consent.ad_user_data,
+        ad_personalization: body.consent.ad_personalization,
       };
     }
 

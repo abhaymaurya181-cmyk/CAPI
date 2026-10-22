@@ -7,6 +7,7 @@ import {
   type ConversionLog,
 } from "../lib/firestore.js";
 import { hashIdentity } from "../lib/hash.js";
+import { selectClicks } from "../lib/click-ids.js";
 import { verifyShopifyHmac } from "../lib/shopify-hmac.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
 
@@ -107,12 +108,10 @@ export default async function shopifyWebhookRoute(app: FastifyInstance): Promise
 
     // Click IDs from cart attributes (if frontend writes them) take precedence
     // over the visitor record, since they're the exact click that led to this order.
-    const gclid = noteAttr(order, "gclid") ?? visitor?.click_ids?.gclid?.value;
-    const fbc = noteAttr(order, "fbc") ?? visitor?.fbc;
+    const clicks = selectClicks(visitor);
+    const gclid = noteAttr(order, "gclid") ?? clicks.google?.gclid;
+    const fbc = noteAttr(order, "fbc") ?? clicks.meta?.fbc;
     const fbp = noteAttr(order, "fbp") ?? visitor?.fbp;
-    const fbclid = noteAttr(order, "fbclid") ?? visitor?.click_ids?.fbclid?.value;
-    // Google uses raw gclid; Meta prefers fbc/fbp but can accept raw fbclid.
-    void fbclid;
 
     const amount = Number(order.current_total_price ?? order.total_price ?? 0);
     const eventTime = order.created_at

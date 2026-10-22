@@ -8,6 +8,7 @@ import {
   type ConversionLog,
 } from "../lib/firestore.js";
 import { hashIdentity } from "../lib/hash.js";
+import { selectClicks } from "../lib/click-ids.js";
 import { requireBearer } from "../lib/auth.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
 
@@ -80,6 +81,7 @@ export default async function uploadCsvRoute(app: FastifyInstance): Promise<void
           email_hash: identity.email,
         });
         if (visitor) matchedWithVisitor++;
+        const clicks = selectClicks(visitor);
 
         const eventTime = r.event_time
           ? Timestamp.fromDate(new Date(r.event_time))
@@ -100,8 +102,10 @@ export default async function uploadCsvRoute(app: FastifyInstance): Promise<void
           city_hash: identity.city,
           state_hash: identity.state,
           country_hash: identity.country,
-          gclid: visitor?.click_ids?.gclid?.value,
-          fbc: visitor?.fbc,
+          gclid: clicks.google?.gclid,
+          gbraid: clicks.google?.gbraid,
+          wbraid: clicks.google?.wbraid,
+          fbc: clicks.meta?.fbc,
           fbp: visitor?.fbp,
           client_ip_address: visitor?.client_ip_address,
           client_user_agent: visitor?.client_user_agent,

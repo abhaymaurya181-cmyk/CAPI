@@ -7,16 +7,53 @@ export const db = new Firestore({
 
 export { FieldValue, Timestamp };
 
-export interface ClickId {
-  value: string;
-  captured_at: Timestamp;
-  campaign?: string;
+/** Where an ad click landed (from the tracker's landing cookie). */
+export interface LandingInfo {
+  url?: string;
+  referrer?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  utm_term?: string;
 }
+
+/** Shared by both platforms: when the click happened and what we saw with it. */
+interface ClickBase {
+  // Actual click time from the cookie when known, otherwise when we first saw it.
+  captured_at: Timestamp;
+  landing?: LandingInfo;
+  // Device context from the /identify call that first recorded this click.
+  ip_address?: string;
+  user_agent?: string;
+}
+
+export interface MetaClick extends ClickBase {
+  fbclid?: string;
+  fbc?: string;
+}
+
+export interface GoogleClick extends ClickBase {
+  gclid?: string;
+  gbraid?: string;
+  wbraid?: string;
+}
+
+/** First and latest click per platform. CLICK_MODE picks which one is sent. */
+export interface ClickPair<T> {
+  first?: T;
+  last?: T;
+}
+
+export type ConsentState = "granted" | "denied";
 
 export interface VisitorConsent {
   marketing: boolean;
   timestamp: Timestamp;
   version: string;
+  // Google Consent Mode v2 signals, passed to the Data Manager API.
+  ad_user_data?: ConsentState;
+  ad_personalization?: ConsentState;
 }
 
 export interface Visitor {
@@ -41,13 +78,25 @@ export interface Visitor {
   city_hash?: string | null;
   state_hash?: string | null;
   country_hash?: string | null;
+  raw_dob?: string;
+  raw_gender?: string;
+  dob_hash?: string | null;
+  gender_hash?: string | null;
+  // Meta external_id: sha256 of shopify_customer_id, else user_id, else lcid.
+  external_id?: string;
+  external_id_source?: "shopify_customer_id" | "user_id" | "lcid";
+  lcid?: string;
   cookie_ids?: string[];
   click_ids?: {
-    gclid?: ClickId;
-    fbclid?: ClickId;
+    meta?: ClickPair<MetaClick>;
+    google?: ClickPair<GoogleClick>;
   };
+  // Meta browser id (not a click); latest value.
   fbp?: string;
-  fbc?: string;
+  fbp_captured_at?: Timestamp;
+  // Google tag's own visitor ids, latest values.
+  gcl_au?: string;
+  ga_client_id?: string;
   // Device context from the last /identify POST, sent as-is to Meta.
   client_ip_address?: string;
   client_user_agent?: string;
@@ -85,6 +134,8 @@ export interface ConversionLog {
   state_hash?: string | null;
   country_hash?: string | null;
   gclid?: string;
+  gbraid?: string;
+  wbraid?: string;
   fbc?: string;
   fbp?: string;
   client_ip_address?: string;

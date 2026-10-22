@@ -1200,10 +1200,14 @@
 
     function renderVisitorRow(v) {
       const name = [v.first_name, v.last_name].filter(Boolean).join(" ");
+      const g = v.google_click?.last || {};
+      const m = v.meta_click?.last || {};
       const clicks = [
-        clickBadge("gclid", Boolean(v.gclid)),
-        clickBadge("fbclid", Boolean(v.fbclid)),
-        clickBadge("fbc", Boolean(v.fbc)),
+        clickBadge("gclid", Boolean(g.gclid)),
+        clickBadge("gbraid", Boolean(g.gbraid)),
+        clickBadge("wbraid", Boolean(g.wbraid)),
+        clickBadge("fbclid", Boolean(m.fbclid)),
+        clickBadge("fbc", Boolean(m.fbc)),
         clickBadge("fbp", Boolean(v.fbp)),
       ].join(" · ");
       return `
@@ -1217,6 +1221,32 @@
           <td>${clicks}</td>
           <td class="mono">${esc(v.client_ip) || "—"}</td>
         </tr>
+      `;
+    }
+
+    // First + last click for one platform. The one CLICK_MODE sends is marked.
+    function renderClickSection(title, pair, idFields, mode) {
+      const one = (label, c) => {
+        if (!c) return kv(label, null);
+        const lp = c.landing || {};
+        const utm = [lp.utm_source, lp.utm_medium, lp.utm_campaign].filter(Boolean).join(" / ");
+        return `
+          <div class="kv-row"><span class="kv-key">${esc(label)}</span><span class="kv-val"></span></div>
+          ${idFields.map((f) => kv(f, c[f])).join("")}
+          ${kv("clicked at", c.captured_at ? fmtDateTime(c.captured_at) : null)}
+          ${kv("landing", lp.url)}
+          ${kv("referrer", lp.referrer)}
+          ${kv("utm", utm)}
+          ${kv("IP", c.ip_address)}
+        `;
+      };
+      const sent = mode === "first" ? "first" : "last";
+      return `
+        <div class="expansion-section">
+          <h4>${esc(title)}</h4>
+          ${one(sent === "last" ? "Last click (sent)" : "Last click", pair?.last)}
+          ${one(sent === "first" ? "First click (sent)" : "First click", pair?.first)}
+        </div>
       `;
     }
 
@@ -1235,21 +1265,29 @@
             ${kv("Address", addr)}
             ${kv("Shopify ID", v.shopify_customer_id)}
             ${kv("User ID", v.user_id)}
+            ${kv("Date of birth", v.dob)}
+            ${kv("Gender", v.gender)}
           </div>
+          ${renderClickSection("Meta click", v.meta_click, ["fbclid", "fbc"], v.click_mode)}
+          ${renderClickSection("Google click", v.google_click, ["gclid", "gbraid", "wbraid"], v.click_mode)}
           <div class="expansion-section">
-            <h4>Click IDs</h4>
-            ${kv("gclid", v.gclid)}
-            ${kv("fbclid", v.fbclid)}
-            ${kv("_fbc", v.fbc)}
+            <h4>Browser IDs & consent</h4>
             ${kv("_fbp", v.fbp)}
-            ${kv("gclid at", v.gclid_captured_at ? fmtDateTime(v.gclid_captured_at) : null)}
-            ${kv("fbclid at", v.fbclid_captured_at ? fmtDateTime(v.fbclid_captured_at) : null)}
+            ${kv("_fbp at", v.fbp_captured_at ? fmtDateTime(v.fbp_captured_at) : null)}
+            ${kv("_gcl_au", v.gcl_au)}
+            ${kv("GA client ID", v.ga_client_id)}
+            ${kv("external_id", v.external_id, "hash")}
+            ${kv("external_id from", v.external_id_source)}
+            ${kv("Marketing consent", v.consent ? String(v.consent.marketing) : null)}
+            ${kv("ad_user_data", v.consent?.ad_user_data)}
+            ${kv("ad_personalization", v.consent?.ad_personalization)}
           </div>
           <div class="expansion-section">
             <h4>Device & Behavior</h4>
             ${kv("IP", v.client_ip)}
             ${kv("User-Agent", v.client_user_agent)}
             ${kv("Touchpoints", (v.touchpoints || []).join(", ") || null)}
+            ${kv("lcid", v.lcid)}
             ${kv("Cookie IDs", (v.cookie_ids || []).join(", ") || null)}
             ${kv("First seen", v.first_seen_at ? fmtDateTime(v.first_seen_at) : null)}
             ${kv("Last seen", v.last_seen_at ? fmtDateTime(v.last_seen_at) : null)}
@@ -1313,7 +1351,12 @@
           <td>${fmtMoney(c.amount, c.currency)}</td>
           <td>${statusPill(c.meta_status)}</td>
           <td>${statusPill(c.google_status)}</td>
-          <td>${clickBadge("gclid", c.has_gclid)} · ${clickBadge("fbc", c.has_fbc)}</td>
+          <td>${[
+            clickBadge("gclid", c.has_gclid),
+            clickBadge("gbraid", c.has_gbraid),
+            clickBadge("wbraid", c.has_wbraid),
+            clickBadge("fbc", c.has_fbc),
+          ].join(" · ")}</td>
         </tr>
       `;
     }
@@ -1334,6 +1377,8 @@
           <div class="expansion-section">
             <h4>Click IDs</h4>
             ${kv("gclid", c.gclid)}
+            ${kv("gbraid", c.gbraid)}
+            ${kv("wbraid", c.wbraid)}
             ${kv("_fbc", c.fbc)}
             ${kv("_fbp", c.fbp)}
             ${kv("IP", c.client_ip_address)}
