@@ -9,44 +9,106 @@ export function sha256(input: string): string {
 /**
  * Normalise a phone number to E.164.
  * Bare 10-digit input is treated as Indian and must start with 6-9 (matches
- * lucira-frontend/src/lib/phone.js). Inputs with a country code already
- * attached (12+ digits or leading +) pass through if length is 11-15.
+ * lucira-frontend/src/lib/phone.js). Leading zeros (trunk `0`, `00` intl
+ * prefix) are dropped, and so is a trunk `0` written after +91. Other
+ * country codes pass through if the total length is 11-15 digits.
  * Returns null for empty or malformed input.
  */
 export function normalizePhoneE164(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const digits = raw.replace(/\D/g, "").replace(/^0+/, "");
+  let digits = raw.replace(/\D/g, "").replace(/^0+/, "");
   if (!digits) return null;
+
+  // "+91 0 98765 43210" → drop the trunk 0 after the country code.
+  if (digits.length === 13 && digits.startsWith(INDIA_CC + "0")) {
+    digits = INDIA_CC + digits.slice(3);
+  }
 
   if (digits.length === 10) {
     if (!/^[6-9]/.test(digits)) return null;
     return "+" + INDIA_CC + digits;
   }
 
+  // +91 is only India: the 10-digit mobile after it must start with 6-9.
+  if (digits.length === 12 && digits.startsWith(INDIA_CC)) {
+    return /^[6-9]/.test(digits.slice(2)) ? "+" + digits : null;
+  }
+
   if (digits.length < 11 || digits.length > 15) return null;
   return "+" + digits;
 }
 
+/** Email for Meta (and for matching): trim + lowercase. */
 export function normalizeEmail(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const trimmed = raw.trim().toLowerCase();
-  if (!trimmed.includes("@")) return null;
-  // Filter Lucira's dummy phone-based emails (matches logic in lucira-frontend/src/lib/gtm.js)
-  // if (/^\+?\d{7,15}@(gmail\.com|lucirajewelry\.com)$/i.test(trimmed)) {
-  //   return null;
-  // }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) return null;
   return trimmed;
 }
 
+/**
+ * Email for Google (Data Manager formatting rules): as normalizeEmail, plus
+ * for gmail.com / googlemail.com remove dots and any +suffix in the local part.
+ */
+export function normalizeEmailForGoogle(raw: string | null | undefined): string | null {
+  const email = normalizeEmail(raw);
+  if (!email) return null;
+  const [local, domain] = email.split("@");
+  if (domain !== "gmail.com" && domain !== "googlemail.com") return email;
+  const cleaned = local.split("+")[0].replace(/\./g, "");
+  return cleaned ? `${cleaned}@${domain}` : null;
+}
+
+/**
+ * Lucira creates placeholder emails from the phone number for phone-only
+ * signups (lucira-frontend/src/lib/gtm.js). They carry no extra match value,
+ * so drop them: any all-digit @lucirajewelry.com address, and an all-digit
+ * @gmail.com address only when the digits are this person's own phone —
+ * real customers do use number-style gmail addresses.
+ */
+export function isPlaceholderEmail(
+  email: string | null | undefined,
+  phone?: string | null
+): boolean {
+  const e = normalizeEmail(email);
+  if (!e) return false;
+  const m = e.match(/^\+?(\d{7,15})@(gmail\.com|lucirajewelry\.com)$/);
+  if (!m) return false;
+  if (m[2] === "lucirajewelry.com") return true;
+  const own = normalizePhoneE164(phone);
+  return own != null && normalizePhoneE164(m[1]) === own;
+}
+
+/** normalizeEmail, but null for Lucira's placeholder emails. */
+export function cleanEmail(
+  email: string | null | undefined,
+  phone?: string | null
+): string | null {
+  return isPlaceholderEmail(email, phone) ? null : normalizeEmail(email);
+}
+
+// Honorifics dropped from the start of a name (Google: "omit prefixes"),
+// and suffixes from the end ("omit suffixes, such as Jr.").
+const NAME_PREFIXES = new Set(["mr", "mrs", "ms", "miss", "dr", "shri", "sri", "smt", "kumari"]);
+const NAME_SUFFIXES = new Set(["jr", "sr"]);
+
+/**
+ * Name: lowercase, no punctuation, single spaces. Non-English letters
+ * (Hindi, accents) are kept as UTF-8 — Meta accepts them and Google gives no
+ * rule against them. Honorific prefixes / Jr-Sr suffixes are removed.
+ */
 export function normalizeName(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const cleaned = raw
+  const words = raw
     .trim()
     .toLowerCase()
-    .replace(/[^a-z\s-]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return cleaned || null;
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{M}\s]/gu, "")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length > 1 && NAME_PREFIXES.has(words[0])) words.shift();
+  if (words.length > 1 && NAME_SUFFIXES.has(words[words.length - 1])) words.pop();
+  return words.join(" ") || null;
 }
 
 /** Phone hashed for Meta CAPI (digits-only, no leading plus). */
@@ -61,9 +123,15 @@ export function hashPhoneForGoogle(raw: string | null | undefined): string | nul
   return e164 ? sha256(e164) : null;
 }
 
-/** Email hash. Same input format for both Meta and Google. */
+/** Email hash for Meta, and the key used for visitor lookup / admin search. */
 export function hashEmail(raw: string | null | undefined): string | null {
   const normalized = normalizeEmail(raw);
+  return normalized ? sha256(normalized) : null;
+}
+
+/** Email hash for Google (gmail dots / +suffix removed). */
+export function hashEmailForGoogle(raw: string | null | undefined): string | null {
+  const normalized = normalizeEmailForGoogle(raw);
   return normalized ? sha256(normalized) : null;
 }
 
@@ -85,11 +153,16 @@ export function hashZip(raw: string | null | undefined): string | null {
   return normalized ? sha256(normalized) : null;
 }
 
-/** City/state hash: lowercase, trim, no special chars. */
-export function hashLocality(raw: string | null | undefined): string | null {
+/** City/state (Meta ct/st): lowercase, no punctuation, no spaces; UTF-8 letters kept. */
+export function normalizeLocality(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const cleaned = raw.trim().toLowerCase().replace(/[^a-z\s]/g, "").replace(/\s+/g, "").trim();
-  return cleaned ? sha256(cleaned) : null;
+  const cleaned = raw.trim().toLowerCase().normalize("NFC").replace(/[^\p{L}\p{M}]/gu, "");
+  return cleaned || null;
+}
+
+export function hashLocality(raw: string | null | undefined): string | null {
+  const normalized = normalizeLocality(raw);
+  return normalized ? sha256(normalized) : null;
 }
 
 /** Country code hash: expects ISO-3166 alpha-2 (e.g. "IN"), lowercased before hashing. */
@@ -143,7 +216,9 @@ export function hashGender(raw: string | null | undefined): string | null {
 export interface HashedIdentity {
   phone_meta: string | null;
   phone_google: string | null;
+  // Meta format; also the visitor lookup key.
   email: string | null;
+  email_google: string | null;
   first_name: string | null;
   last_name: string | null;
   zip: string | null;
@@ -162,10 +237,12 @@ export function hashIdentity(input: {
   state?: string | null;
   country?: string | null;
 }): HashedIdentity {
+  const email = cleanEmail(input.email, input.phone);
   return {
     phone_meta: hashPhoneForMeta(input.phone),
     phone_google: hashPhoneForGoogle(input.phone),
-    email: hashEmail(input.email),
+    email: hashEmail(email),
+    email_google: hashEmailForGoogle(email),
     first_name: hashName(input.firstName),
     last_name: hashName(input.lastName),
     zip: hashZip(input.zip),

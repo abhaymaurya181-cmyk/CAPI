@@ -13,8 +13,8 @@ import {
   hashDob,
   hashGender,
   hashIdentity,
+  cleanEmail,
   normalizeDob,
-  normalizeEmail,
   normalizeGender,
   normalizeName,
   normalizePhoneE164,
@@ -176,20 +176,23 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
 
     const update: Partial<Visitor> = {
       first_seen_at: existing?.first_seen_at ?? now,
-      phone_meta: identity.phone_meta,
-      phone_google: identity.phone_google,
-      email_hash: identity.email,
-      first_name_hash: identity.first_name,
-      last_name_hash: identity.last_name,
-      zip_hash: identity.zip,
-      city_hash: identity.city,
-      state_hash: identity.state,
-      country_hash: identity.country,
+      // `?? undefined` everywhere: ignoreUndefinedProperties on the Firestore
+      // client skips undefined, so an event that lacks (or has a malformed)
+      // field never wipes a value stored by an earlier event. A null would.
+      phone_meta: identity.phone_meta ?? undefined,
+      phone_google: identity.phone_google ?? undefined,
+      email_hash: identity.email ?? undefined,
+      email_google_hash: identity.email_google ?? undefined,
+      first_name_hash: identity.first_name ?? undefined,
+      last_name_hash: identity.last_name ?? undefined,
+      zip_hash: identity.zip ?? undefined,
+      city_hash: identity.city ?? undefined,
+      state_hash: identity.state ?? undefined,
+      // Only when sent: hashIdentity defaults country to IN.
+      country_hash: body.country ? identity.country ?? undefined : undefined,
       // Raw (normalized) values persisted alongside hashes for admin display.
-      // ignoreUndefinedProperties on the Firestore client drops anything that
-      // doesn't normalize cleanly, so a malformed phone won't wipe a good one.
       raw_phone: normalizePhoneE164(body.phone) ?? undefined,
-      raw_email: normalizeEmail(body.email) ?? undefined,
+      raw_email: cleanEmail(body.email, body.phone) ?? undefined,
       raw_first_name: normalizeName(body.first_name) ?? undefined,
       raw_last_name: normalizeName(body.last_name) ?? undefined,
       raw_zip: body.zip?.trim() || undefined,

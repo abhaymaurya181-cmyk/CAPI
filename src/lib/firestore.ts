@@ -72,6 +72,8 @@ export interface Visitor {
   phone_meta?: string | null;
   phone_google?: string | null;
   email_hash?: string | null;
+  // Google-format email hash (gmail dots / +suffix removed).
+  email_google_hash?: string | null;
   first_name_hash?: string | null;
   last_name_hash?: string | null;
   zip_hash?: string | null;
@@ -127,6 +129,7 @@ export interface ConversionLog {
   phone_meta?: string | null;
   phone_google?: string | null;
   email_hash?: string | null;
+  email_google_hash?: string | null;
   first_name_hash?: string | null;
   last_name_hash?: string | null;
   zip_hash?: string | null;

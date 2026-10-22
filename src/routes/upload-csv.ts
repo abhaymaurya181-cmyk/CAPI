@@ -96,6 +96,7 @@ export default async function uploadCsvRoute(app: FastifyInstance): Promise<void
           phone_meta: identity.phone_meta,
           phone_google: identity.phone_google,
           email_hash: identity.email,
+          email_google_hash: identity.email_google,
           first_name_hash: identity.first_name,
           last_name_hash: identity.last_name,
           zip_hash: identity.zip,

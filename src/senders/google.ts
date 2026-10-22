@@ -49,7 +49,8 @@ export async function sendPurchaseToGoogle(log: ConversionLog): Promise<SendResu
   });
 
   const user_identifiers: Array<Record<string, string>> = [];
-  if (log.email_hash) user_identifiers.push({ hashed_email: log.email_hash });
+  const emailHash = log.email_google_hash ?? log.email_hash;
+  if (emailHash) user_identifiers.push({ hashed_email: emailHash });
   if (log.phone_google) user_identifiers.push({ hashed_phone_number: log.phone_google });
 
   const conversion = {
