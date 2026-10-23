@@ -61,8 +61,37 @@ app.get("/health", async () => ({ status: "ok", ts: Date.now() }));
 
 const trackerPath = join(__dirname, "..", "public", "t.js");
 let trackerCache: Buffer | null = null;
-app.get("/t.js", async (_req, reply) => {
+const LCID_MAX_AGE_SECONDS = 63_072_000; // 2 years
+
+// Derive the apex domain (.example.com) from Host so the cookie is shared by
+// www. / checkout. / etc. Localhost or bare-IP hosts get no Domain attribute.
+function cookieDomainFromHost(host?: string): string | undefined {
+  if (!host) return undefined;
+  const bare = host.split(":")[0];
+  if (bare === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(bare)) return undefined;
+  const parts = bare.split(".");
+  if (parts.length < 2) return undefined;
+  return "." + parts.slice(-2).join(".");
+}
+
+// Lucira's site loads /t.js on every page, so this endpoint is the natural
+// place to refresh the lcid cookie. If a visitor already has one, re-stamp
+// the Max-Age so the expiry window slides forward on every return visit.
+// First-time visitors still get their lcid minted by POST /identify — the
+// SDK does that on identify calls — this just extends the existing one.
+app.get("/t.js", async (req, reply) => {
   if (!trackerCache) trackerCache = await readFile(trackerPath);
+  const existingLcid = req.cookies?.lcid;
+  if (existingLcid) {
+    reply.setCookie("lcid", existingLcid, {
+      path: "/",
+      httpOnly: true,
+      secure: req.protocol === "https",
+      sameSite: "lax",
+      maxAge: LCID_MAX_AGE_SECONDS,
+      domain: cookieDomainFromHost(req.headers.host),
+    });
+  }
   reply
     .header("Content-Type", "application/javascript; charset=utf-8")
     .header("Cache-Control", "public, max-age=300")

@@ -1624,7 +1624,11 @@
     }
 
     if (token) {
-      api("/admin/api/stats").then(bootApp).catch(() => logout());
+      // api() already handles 401 by logging out via its own guard. Any other
+      // failure (500 from a transient Firestore issue, missing index, etc.)
+      // shouldn't bounce the operator back to the login screen — boot the
+      // app anyway and let the inner pages surface their own error states.
+      api("/admin/api/stats").catch(() => {}).finally(bootApp);
     } else {
       showLogin();
     }
