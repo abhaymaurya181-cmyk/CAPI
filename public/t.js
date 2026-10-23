@@ -284,7 +284,13 @@
     var args = Array.prototype.slice.call(arguments);
     var cmd = args[0];
     if (cmd === "init") return init(args[1]);
-    if (cmd === "identify") return send(args[1] || "login", args[2] || args[1]);
+    if (cmd === "identify") {
+      // Two signatures:
+      //   lucira("identify", {phone, email, ...})         → event defaults to "login"
+      //   lucira("identify", "signup", {phone, email})    → explicit event name
+      var isStr = typeof args[1] === "string";
+      return send(isStr ? args[1] : "login", isStr ? args[2] : args[1]);
+    }
     if (cmd === "track") return send(args[1], args[2]);
     if (cmd === "page") return send("page_view", args[1]);
     if (cmd === "debug") { config.debug = !!args[1]; return; }
@@ -297,7 +303,13 @@
   window.lucira = lucira;
 
   try {
+    // document.currentScript is null when the <script> is injected dynamically
+    // (which Next.js <Script strategy="afterInteractive"> does). Fall back to
+    // querying any script tag that references this file and carries data-tenant.
     var scriptEl = document.currentScript;
+    if (!scriptEl) {
+      scriptEl = document.querySelector('script[data-tenant][src*="/t.js"]');
+    }
     if (scriptEl) {
       var tenant = scriptEl.getAttribute("data-tenant");
       var endpoint = scriptEl.getAttribute("data-endpoint");
@@ -305,6 +317,11 @@
       if (tenant && auto !== "false") {
         init({ tenant: tenant, endpoint: endpoint || undefined });
       }
+    }
+    // Final safety net: if the SDK is loaded but no auto-init tag is found,
+    // still initialize with inferred defaults so manual lucira(...) calls work.
+    if (!initialized) {
+      init({});
     }
   } catch (e) {}
 
