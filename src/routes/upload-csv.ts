@@ -1,16 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { Timestamp } from "@google-cloud/firestore";
-import {
-  conversionsCol,
-  findVisitorByIdentifiers,
-  writeConversion,
-  type ConversionLog,
-} from "../lib/firestore.js";
-import { hashIdentity, normalizeZipIndia } from "../lib/hash.js";
-import { selectClicks } from "../lib/click-ids.js";
 import { requireBearer } from "../lib/auth.js";
-import { dispatchConversion } from "../senders/dispatcher.js";
+import { runCsvImport } from "../lib/sync.js";
 
 const row = z.object({
   sale_id: z.string().min(1),
@@ -44,103 +35,21 @@ export default async function uploadCsvRoute(app: FastifyInstance): Promise<void
       });
     }
 
-    let processed = 0;
-    let skippedDuplicate = 0;
-    let matchedWithVisitor = 0;
-    const failures: Array<{ sale_id: string; error: string }> = [];
-
-    for (const r of parsed.data.rows) {
-      try {
-        if (!r.phone && !r.email) {
-          failures.push({ sale_id: r.sale_id, error: "no_identifier" });
-          continue;
-        }
-
-        const existing = await conversionsCol.doc(r.sale_id).get();
-        if (existing.exists) {
-          const d = existing.data() as ConversionLog;
-          if (d.meta_capi?.status === "success" && d.google_ads?.status === "success") {
-            skippedDuplicate++;
-            continue;
-          }
-        }
-
-        const identity = hashIdentity({
-          phone: r.phone,
-          email: r.email,
-          firstName: r.first_name,
-          lastName: r.last_name,
-          zip: r.zip,
-          city: r.city,
-          state: r.state,
-          country: r.country,
-        });
-
-        const visitor = await findVisitorByIdentifiers({
-          phone_meta: identity.phone_meta,
-          email_hash: identity.email,
-        });
-        if (visitor) matchedWithVisitor++;
-        const clicks = selectClicks(visitor);
-
-        const eventTime = r.event_time
-          ? Timestamp.fromDate(new Date(r.event_time))
-          : Timestamp.now();
-
-        const conversion: Omit<ConversionLog, "created_at" | "updated_at"> = {
-          source: "csv_upload",
-          order_id: r.sale_id,
-          order_amount: r.amount,
-          currency: r.currency,
-          event_time: eventTime,
-          phone_meta: identity.phone_meta,
-          phone_google: identity.phone_google,
-          email_hash: identity.email,
-          email_google_hash: identity.email_google,
-          first_name_hash: identity.first_name,
-          last_name_hash: identity.last_name,
-          zip_hash: identity.zip,
-          city_hash: identity.city,
-          state_hash: identity.state,
-          country_hash: identity.country,
-          dob_hash: visitor?.dob_hash,
-          gender_hash: visitor?.gender_hash,
-          external_id: visitor?.external_id,
-          postal_code: normalizeZipIndia(r.zip) ?? undefined,
-          region_code: /^[a-z]{2}$/i.test(r.country.trim()) ? r.country.trim().toUpperCase() : undefined,
-          consent: visitor?.consent
-            ? {
-                ad_user_data: visitor.consent.ad_user_data,
-                ad_personalization: visitor.consent.ad_personalization,
-              }
-            : undefined,
-          gclid: clicks.google?.gclid,
-          gbraid: clicks.google?.gbraid,
-          wbraid: clicks.google?.wbraid,
-          fbc: clicks.meta?.fbc,
-          fbp: visitor?.fbp,
-          client_ip_address: visitor?.client_ip_address,
-          client_user_agent: visitor?.client_user_agent,
-          action_source: "physical_store",
-          meta_capi: { status: "pending", retries: 0 },
-          google_ads: { status: "pending", retries: 0 },
-        };
-
-        await writeConversion(r.sale_id, conversion);
-        void dispatchConversion(r.sale_id).catch((err) => {
-          req.log.error({ err, saleId: r.sale_id }, "csv dispatch failed");
-        });
-        processed++;
-      } catch (err) {
-        failures.push({ sale_id: r.sale_id, error: (err as Error).message });
-      }
-    }
+    const run = await runCsvImport(
+      parsed.data.rows.map((r) => ({
+        ...r,
+        event_time: r.event_time ? new Date(r.event_time) : new Date(),
+      }))
+    );
 
     return reply.code(200).send({
-      processed,
-      skipped_duplicate: skippedDuplicate,
-      matched_with_visitor: matchedWithVisitor,
-      failures,
+      sync_run_id: run.id,
+      status: run.status,
+      processed: run.processed,
+      skipped_duplicate: run.skipped_duplicate,
+      matched_with_visitor: run.matched,
+      matched_with_click: run.matched_with_click,
+      failures: run.failures,
     });
   });
 }

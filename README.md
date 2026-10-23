@@ -15,7 +15,10 @@ Server-side offline conversion tracking for Lucira Jewellery. Matches store (Orn
 |---|---|
 | `POST /identify` | GTM tag posts user identity + click IDs |
 | `POST /webhook/ornaverse` | OrnaVerse offline sales |
-| `POST /upload/csv` | Admin CSV upload fallback for offline sales |
+| `POST /admin/api/upload/offline-sales` | Admin CSV upload fallback for offline sales |
+| `POST /internal/sync-offline` | Scheduled OrnaVerse pull → match → send (Cloud Scheduler, `INTERNAL_TOKEN`) |
+| `POST /internal/retry-sweep` | Re-send conversions whose retry is due (Cloud Scheduler, `INTERNAL_TOKEN`) |
+| `GET /admin/api/sync-runs` | Sync log |
 | `GET /admin/*` | Admin UI (auth required) |
 | `GET /health` | Health check |
 

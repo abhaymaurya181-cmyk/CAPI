@@ -11,6 +11,7 @@ import identifyRoute from "./routes/identify.js";
 import ornaverseWebhookRoute from "./routes/webhook-ornaverse.js";
 import uploadCsvRoute from "./routes/upload-csv.js";
 import retrySweepRoute from "./routes/retry-sweep.js";
+import syncRoute from "./routes/sync.js";
 import adminApiRoute from "./routes/admin-api.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,7 @@ await app.register(ornaverseWebhookRoute);
 await app.register(adminApiRoute);
 await app.register(uploadCsvRoute);
 await app.register(retrySweepRoute);
+await app.register(syncRoute);
 
 // Admin UI (static HTML/JS). Must register AFTER /admin/api/* so the API
 // routes take precedence over the static handler.

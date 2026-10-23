@@ -109,7 +109,9 @@ export interface Visitor {
 }
 
 export type ConversionSource = "ornaverse_offline" | "csv_upload";
-// "validated": Google validateOnly passed, nothing sent; not picked up by the retry sweep.
+// pending: not tried yet. retrying: failed, another attempt is scheduled.
+// failed: no more automatic attempts (permanent error or retries used up).
+// validated: Google validateOnly passed, nothing sent.
 export type SendStatus = "pending" | "success" | "failed" | "retrying" | "validated";
 
 export interface SenderResult {
@@ -119,6 +121,20 @@ export interface SenderResult {
   retries: number;
   sent_at?: Timestamp;
   error?: string;
+  // Set only while an automatic attempt is due; the retry sweep queries on it.
+  next_retry_at?: Timestamp;
+}
+
+/** How a sale was tied to a website visitor (see lib/matcher.ts). */
+export interface MatchInfo {
+  matched_by: "phone" | "email" | null;
+  visitor_key?: string;
+  click_mode: "first" | "last";
+  // Which stored click was sent per platform, and when it happened.
+  meta_click?: "first" | "last";
+  meta_click_at?: Timestamp;
+  google_click?: "first" | "last";
+  google_click_at?: Timestamp;
 }
 
 export interface ConversionLog {
@@ -127,6 +143,10 @@ export interface ConversionLog {
   order_amount: number;
   currency: string;
   event_time: Timestamp;
+  store_name?: string;
+  // Sync run that imported this sale.
+  sync_run_id?: string;
+  match?: MatchInfo;
   phone_meta?: string | null;
   phone_google?: string | null;
   email_hash?: string | null;
@@ -160,11 +180,46 @@ export interface ConversionLog {
   updated_at: Timestamp;
 }
 
+export type SyncTrigger = "schedule" | "manual" | "csv";
+export type SyncStatus = "running" | "ok" | "partial" | "failed" | "skipped";
+
+/** One import of offline sales (scheduled OrnaVerse pull or CSV upload). */
+export interface SyncRun {
+  source: ConversionSource;
+  trigger: SyncTrigger;
+  status: SyncStatus;
+  started_at: Timestamp;
+  finished_at?: Timestamp;
+  // Sale-time window requested from the source (scheduled pulls only).
+  window_from?: Timestamp;
+  window_to?: Timestamp;
+  fetched: number;
+  processed: number;
+  matched: number;
+  matched_with_click: number;
+  skipped_duplicate: number;
+  failed: number;
+  // First few row failures, for the admin UI.
+  failures: Array<{ sale_id: string; error: string }>;
+  error?: string;
+}
+
+/** Per-source sync cursor + lock. */
+export interface SyncState {
+  // Sales up to this time have been imported.
+  last_window_to?: Timestamp;
+  last_run_id?: string;
+  // A run holds the lock until this time; stale locks expire on their own.
+  locked_until?: Timestamp;
+}
+
 const VISITORS = "visitors";
 const CONVERSIONS = "conversions_log";
 
 export const visitorsCol = db.collection(VISITORS);
 export const conversionsCol = db.collection(CONVERSIONS);
+export const syncRunsCol = db.collection("sync_runs");
+export const syncStateCol = db.collection("sync_state");
 
 /**
  * Primary visitor key. Prefer phone_meta (Indian jewellery buyers almost
@@ -200,35 +255,44 @@ export async function getVisitor(key: string): Promise<Visitor | null> {
   return snap.exists ? (snap.data() as Visitor) : null;
 }
 
+export interface VisitorMatch {
+  visitor: Visitor;
+  key: string;
+  matched_by: "phone" | "email";
+}
+
 /**
- * Look up a visitor by whichever identifier arrives on an order. We try
- * phone_meta first (used as the document key), then email_hash via query.
+ * Look up a visitor by whichever identifier arrives on an order. Phone first
+ * (it is the usual document key), then email. Each tries the document key,
+ * then a field query for visitors keyed by something else.
  */
 export async function findVisitorByIdentifiers(input: {
   phone_meta?: string | null;
   email_hash?: string | null;
-}): Promise<Visitor | null> {
-  if (input.phone_meta) {
-    const direct = await getVisitor(input.phone_meta);
-    if (direct) return direct;
-  }
-  if (input.email_hash) {
-    const direct = await getVisitor(input.email_hash);
-    if (direct) return direct;
-    const q = await visitorsCol.where("email_hash", "==", input.email_hash).limit(1).get();
-    if (!q.empty) return q.docs[0].data() as Visitor;
+}): Promise<VisitorMatch | null> {
+  const tries: Array<["phone" | "email", "phone_meta" | "email_hash", string | null | undefined]> = [
+    ["phone", "phone_meta", input.phone_meta],
+    ["email", "email_hash", input.email_hash],
+  ];
+  for (const [matched_by, field, value] of tries) {
+    if (!value) continue;
+    const direct = await visitorsCol.doc(value).get();
+    if (direct.exists) return { visitor: direct.data() as Visitor, key: direct.id, matched_by };
+    const q = await visitorsCol.where(field, "==", value).limit(1).get();
+    if (!q.empty) return { visitor: q.docs[0].data() as Visitor, key: q.docs[0].id, matched_by };
   }
   return null;
 }
 
 export async function writeConversion(
   orderId: string,
-  data: Omit<ConversionLog, "created_at" | "updated_at">
+  data: Omit<ConversionLog, "created_at" | "updated_at">,
+  createdAt?: Timestamp
 ): Promise<void> {
   const now = Timestamp.now();
   await conversionsCol.doc(orderId).set({
     ...data,
-    created_at: now,
+    created_at: createdAt ?? now,
     updated_at: now,
   });
 }

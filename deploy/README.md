@@ -72,13 +72,16 @@ First deploy prints the service URL. Use it to:
 - Point the DNS CNAME `track.lucirajewelry.com` → the service URL via Cloud Run domain mapping (`gcloud run domain-mappings create`)
 - Open `<url>/admin/` and sign in with `ADMIN_TOKEN`
 
-## Scheduled retry sweep
+## Scheduled jobs
 
 ```sh
 PROJECT_ID="$PROJECT_ID" bash cloud-scheduler.sh
 ```
 
-Default: every 5 minutes, Asia/Kolkata timezone. Change `SCHEDULE` env var to adjust.
+Creates two jobs (Asia/Kolkata):
+
+- `lucira-capi-retry-sweep` → `/internal/retry-sweep`, every 5 minutes (`SCHEDULE`). Re-sends conversions whose retry is due (back-off 5m → 15m → 1h → 4h → 12h, then `failed`).
+- `lucira-capi-sync-offline` → `/internal/sync-offline`, hourly (`SYNC_SCHEDULE`). Pulls new OrnaVerse sales, matches them to visitors and sends them. Every run is listed in the `sync_runs` collection; until the OrnaVerse importer is set up each run is recorded as `skipped`.
 
 ## Smoke tests
 
