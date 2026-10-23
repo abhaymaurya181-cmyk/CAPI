@@ -8,3 +8,6 @@ dist/
 .idea/
 service-account*.json
 coverage/
+# OrnaVerse private API docs (local reference only)
+api-dog*.txt
+api-dog*/
