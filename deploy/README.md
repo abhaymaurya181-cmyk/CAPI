@@ -15,7 +15,8 @@ gcloud services enable run.googleapis.com \
   artifactregistry.googleapis.com \
   firestore.googleapis.com \
   secretmanager.googleapis.com \
-  cloudscheduler.googleapis.com
+  cloudscheduler.googleapis.com \
+  datamanager.googleapis.com
 
 # Artifact Registry (image repo)
 gcloud artifacts repositories create lucira-capi \
@@ -27,10 +28,8 @@ gcloud firestore databases create --location="$REGION"
 # Secrets (paste values when prompted; use `echo -n <val> | gcloud secrets create ... --data-file=-` for scripted)
 for s in ADMIN_TOKEN INTERNAL_TOKEN \
          META_PIXEL_ID META_CAPI_ACCESS_TOKEN \
-         GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_DEVELOPER_TOKEN \
-         GOOGLE_ADS_LOGIN_CUSTOMER_ID GOOGLE_ADS_CLIENT_ID \
-         GOOGLE_ADS_CLIENT_SECRET GOOGLE_ADS_REFRESH_TOKEN \
-         GOOGLE_ADS_CONVERSION_ACTION_ONLINE GOOGLE_ADS_CONVERSION_ACTION_OFFLINE; do
+         GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_LOGIN_CUSTOMER_ID \
+         GOOGLE_ADS_CONVERSION_ACTION_OFFLINE; do
   gcloud secrets create "$s" --replication-policy=automatic
 done
 
@@ -39,15 +38,17 @@ done
 SA="PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 for s in ADMIN_TOKEN INTERNAL_TOKEN \
          META_PIXEL_ID META_CAPI_ACCESS_TOKEN \
-         GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_DEVELOPER_TOKEN \
-         GOOGLE_ADS_LOGIN_CUSTOMER_ID GOOGLE_ADS_CLIENT_ID \
-         GOOGLE_ADS_CLIENT_SECRET GOOGLE_ADS_REFRESH_TOKEN \
-         GOOGLE_ADS_CONVERSION_ACTION_ONLINE GOOGLE_ADS_CONVERSION_ACTION_OFFLINE; do
+         GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_LOGIN_CUSTOMER_ID \
+         GOOGLE_ADS_CONVERSION_ACTION_OFFLINE; do
   gcloud secrets add-iam-policy-binding "$s" \
     --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor
 done
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$SA" --role=roles/datastore.user
+
+# Google Ads (Data Manager API): in Google Ads → Admin → Access and security,
+# add $SA as a user (Standard access) on the account that owns the conversion
+# action, or on the manager account set in GOOGLE_ADS_LOGIN_CUSTOMER_ID.
 ```
 
 ## Firestore indexes

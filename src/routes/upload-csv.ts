@@ -7,7 +7,7 @@ import {
   writeConversion,
   type ConversionLog,
 } from "../lib/firestore.js";
-import { hashIdentity } from "../lib/hash.js";
+import { hashIdentity, normalizeZipIndia } from "../lib/hash.js";
 import { selectClicks } from "../lib/click-ids.js";
 import { requireBearer } from "../lib/auth.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
@@ -106,6 +106,14 @@ export default async function uploadCsvRoute(app: FastifyInstance): Promise<void
           dob_hash: visitor?.dob_hash,
           gender_hash: visitor?.gender_hash,
           external_id: visitor?.external_id,
+          postal_code: normalizeZipIndia(r.zip) ?? undefined,
+          region_code: /^[a-z]{2}$/i.test(r.country.trim()) ? r.country.trim().toUpperCase() : undefined,
+          consent: visitor?.consent
+            ? {
+                ad_user_data: visitor.consent.ad_user_data,
+                ad_personalization: visitor.consent.ad_personalization,
+              }
+            : undefined,
           gclid: clicks.google?.gclid,
           gbraid: clicks.google?.gbraid,
           wbraid: clicks.google?.wbraid,

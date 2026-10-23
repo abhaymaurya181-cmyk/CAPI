@@ -109,7 +109,8 @@ export interface Visitor {
 }
 
 export type ConversionSource = "ornaverse_offline" | "csv_upload";
-export type SendStatus = "pending" | "success" | "failed" | "retrying";
+// "validated": Google validateOnly passed, nothing sent; not picked up by the retry sweep.
+export type SendStatus = "pending" | "success" | "failed" | "retrying" | "validated";
 
 export interface SenderResult {
   status: SendStatus;
@@ -140,6 +141,11 @@ export interface ConversionLog {
   dob_hash?: string | null;
   gender_hash?: string | null;
   external_id?: string;
+  // Google address match: sent unhashed (6-digit pincode, ISO-2 country).
+  postal_code?: string;
+  region_code?: string;
+  // Consent Mode signals from the matched visitor, sent to Google.
+  consent?: Pick<VisitorConsent, "ad_user_data" | "ad_personalization">;
   gclid?: string;
   gbraid?: string;
   wbraid?: string;

@@ -10,7 +10,7 @@ import type { SendResult } from "./types.js";
 
 function toSenderResult(res: SendResult, retries: number): SenderResult {
   return {
-    status: res.ok ? "success" : "failed",
+    status: res.ok ? "success" : res.validated ? "validated" : "failed",
     response_code: res.status,
     response_body: res.body ? res.body.slice(0, 2000) : undefined,
     retries,

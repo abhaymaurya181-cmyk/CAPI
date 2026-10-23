@@ -1,87 +1,178 @@
-import { GoogleAdsApi } from "google-ads-api";
-import type { services } from "google-ads-api";
-import type { ConversionLog } from "../lib/firestore.js";
+import { GoogleAuth } from "google-auth-library";
+import type { ConsentState, ConversionLog } from "../lib/firestore.js";
 import type { SendResult } from "./types.js";
 
-/**
- * Format a Date as the string Google Ads expects for conversion_date_time:
- * 'yyyy-MM-dd HH:mm:ss+HH:mm'. Timezone fixed to UTC for consistency.
- */
-function formatConversionDateTime(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
-    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}+00:00`
-  );
+const INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest";
+const SCOPE = "https://www.googleapis.com/auth/datamanager";
+// Data Manager allows at most 10 user identifiers per event.
+const MAX_IDENTIFIERS = 10;
+
+// Application Default Credentials: the Cloud Run service account in prod,
+// GOOGLE_APPLICATION_CREDENTIALS (a key file) in local dev.
+const auth = new GoogleAuth({ scopes: [SCOPE] });
+
+type ConsentStatus = "CONSENT_GRANTED" | "CONSENT_DENIED";
+
+function consentStatus(s?: ConsentState): ConsentStatus | undefined {
+  if (s === "granted") return "CONSENT_GRANTED";
+  if (s === "denied") return "CONSENT_DENIED";
+  return undefined;
+}
+
+/** Hashed identifiers for userData. Hashes are already in Google format. */
+export function buildGoogleUserIdentifiers(log: ConversionLog): Array<Record<string, unknown>> {
+  const ids: Array<Record<string, unknown>> = [];
+  if (log.email_google_hash) ids.push({ emailAddress: log.email_google_hash });
+  if (log.phone_google) ids.push({ phoneNumber: log.phone_google });
+  // Address only matches with all four parts present.
+  if (log.first_name_hash && log.last_name_hash && log.region_code && log.postal_code) {
+    ids.push({
+      address: {
+        givenName: log.first_name_hash,
+        familyName: log.last_name_hash,
+        regionCode: log.region_code,
+        postalCode: log.postal_code,
+      },
+    });
+  }
+  return ids.slice(0, MAX_IDENTIFIERS);
+}
+
+/** One click id per conversion: gclid, else gbraid, else wbraid. */
+export function buildGoogleAdIdentifiers(log: ConversionLog): Record<string, string> | undefined {
+  if (log.gclid) return { gclid: log.gclid };
+  if (log.gbraid) return { gbraid: log.gbraid };
+  if (log.wbraid) return { wbraid: log.wbraid };
+  return undefined;
+}
+
+export interface GoogleConfig {
+  customerId: string;
+  loginCustomerId?: string;
+  conversionActionId: string;
+  validateOnly: boolean;
+}
+
+/** Full events:ingest request body for one Purchase. */
+export function buildGooglePayload(log: ConversionLog, cfg: GoogleConfig) {
+  const userIdentifiers = buildGoogleUserIdentifiers(log);
+  const adIdentifiers = buildGoogleAdIdentifiers(log);
+  const adUserData = consentStatus(log.consent?.ad_user_data);
+  const adPersonalization = consentStatus(log.consent?.ad_personalization);
+
+  return {
+    destinations: [
+      {
+        operatingAccount: { accountType: "GOOGLE_ADS", accountId: cfg.customerId },
+        ...(cfg.loginCustomerId
+          ? { loginAccount: { accountType: "GOOGLE_ADS", accountId: cfg.loginCustomerId } }
+          : {}),
+        productDestinationId: cfg.conversionActionId,
+      },
+    ],
+    encoding: "HEX",
+    events: [
+      {
+        // order_id doubles as transactionId so a resend of the same sale is deduplicated.
+        transactionId: log.order_id,
+        eventTimestamp: log.event_time.toDate().toISOString(),
+        eventSource: log.action_source === "physical_store" ? "IN_STORE" : "WEB",
+        conversionValue: log.order_amount,
+        currency: log.currency.toUpperCase(),
+        ...(adIdentifiers ? { adIdentifiers } : {}),
+        ...(userIdentifiers.length > 0 ? { userData: { userIdentifiers } } : {}),
+        ...(adUserData || adPersonalization
+          ? {
+              consent: {
+                ...(adUserData ? { adUserData } : {}),
+                ...(adPersonalization ? { adPersonalization } : {}),
+              },
+            }
+          : {}),
+      },
+    ],
+    validateOnly: cfg.validateOnly,
+  };
+}
+
+/** Reasons Google would reject the event outright; null if it is sendable. */
+export function googlePreflightError(log: ConversionLog): string | null {
+  if (!buildGoogleAdIdentifiers(log) && buildGoogleUserIdentifiers(log).length === 0) {
+    return "no_match_keys";
+  }
+  return null;
+}
+
+/** Google API error → "STATUS: message (field: description; ...)". */
+function googleErrorMessage(body: string): string | undefined {
+  try {
+    const e = (
+      JSON.parse(body) as {
+        error?: {
+          status?: string;
+          message?: string;
+          details?: Array<{ fieldViolations?: Array<{ field?: string; description?: string }> }>;
+        };
+      }
+    ).error;
+    if (!e) return undefined;
+    const fields = (e.details ?? [])
+      .flatMap((d) => d.fieldViolations ?? [])
+      .map((v) => `${v.field}: ${v.description}`);
+    return `${e.status ?? "ERROR"}: ${e.message ?? ""}${fields.length ? ` (${fields.join("; ")})` : ""}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function googleConfig(): GoogleConfig | null {
+  const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
+  const conversionActionId = process.env.GOOGLE_ADS_CONVERSION_ACTION_OFFLINE;
+  if (!customerId || !conversionActionId) return null;
+  return {
+    customerId,
+    loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/-/g, "") || undefined,
+    conversionActionId,
+    // Safe default: only an explicit "false" sends real conversions.
+    validateOnly: process.env.GOOGLE_VALIDATE_ONLY !== "false",
+  };
 }
 
 /**
- * Send a Purchase event to Google Ads via uploadClickConversions.
- * Online orders include gclid; offline orders rely on hashed email/phone
- * (Enhanced Conversions for Leads matching on Google's side).
+ * Send a Purchase event to Google Ads through the Data Manager API.
+ * With GOOGLE_VALIDATE_ONLY on, Google only checks the request; a pass comes
+ * back as `validated` (not `ok`) so the sale is still sent once live.
+ * Returns a structured result; errors do not throw.
  */
 export async function sendPurchaseToGoogle(log: ConversionLog): Promise<SendResult> {
-  const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
-  const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
-  const refreshToken = process.env.GOOGLE_ADS_REFRESH_TOKEN;
-  const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
-  const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/-/g, "");
-  const actionId =
-    log.action_source === "website"
-      ? process.env.GOOGLE_ADS_CONVERSION_ACTION_ONLINE
-      : process.env.GOOGLE_ADS_CONVERSION_ACTION_OFFLINE;
+  const cfg = googleConfig();
+  if (!cfg) return { ok: false, status: 0, body: "", error: "google_not_configured" };
 
-  if (!customerId || !devToken || !refreshToken || !clientId || !clientSecret || !actionId) {
-    return { ok: false, status: 0, body: "", error: "google_not_configured" };
-  }
-
-  const client = new GoogleAdsApi({
-    client_id: clientId,
-    client_secret: clientSecret,
-    developer_token: devToken,
-  });
-
-  const customer = client.Customer({
-    customer_id: customerId,
-    refresh_token: refreshToken,
-    login_customer_id: loginCustomerId,
-  });
-
-  const user_identifiers: Array<Record<string, string>> = [];
-  const emailHash = log.email_google_hash ?? log.email_hash;
-  if (emailHash) user_identifiers.push({ hashed_email: emailHash });
-  if (log.phone_google) user_identifiers.push({ hashed_phone_number: log.phone_google });
-
-  const conversion = {
-    conversion_action: `customers/${customerId}/conversionActions/${actionId}`,
-    conversion_date_time: formatConversionDateTime(log.event_time.toDate()),
-    conversion_value: log.order_amount,
-    currency_code: log.currency,
-    order_id: log.order_id,
-    user_identifiers,
-    ...(log.gclid ? { gclid: log.gclid } : {}),
-  };
+  const preflight = googlePreflightError(log);
+  if (preflight) return { ok: false, status: 0, body: "", error: preflight };
 
   try {
-    const request = {
-      customer_id: customerId,
-      conversions: [conversion],
-      partial_failure: true,
-      validate_only: false,
-    } as unknown as services.UploadClickConversionsRequest;
-    const response = await customer.conversionUploads.uploadClickConversions(request);
-    const errors = (response as { partial_failure_error?: unknown })?.partial_failure_error;
-    const ok = !errors;
-    return {
-      ok,
-      status: ok ? 200 : 400,
-      body: JSON.stringify(response),
-    };
+    const token = await auth.getAccessToken();
+    if (!token) return { ok: false, status: 0, body: "", error: "google_auth_no_token" };
+
+    const res = await fetch(INGEST_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(buildGooglePayload(log, cfg)),
+    });
+    const body = await res.text();
+    if (!res.ok) {
+      return { ok: false, status: res.status, body, error: googleErrorMessage(body) };
+    }
+    if (cfg.validateOnly) return { ok: false, validated: true, status: res.status, body };
+    return { ok: true, status: res.status, body };
   } catch (err) {
     return {
       ok: false,
-      status: 500,
+      status: 0,
       body: "",
       error: (err as Error).message,
     };

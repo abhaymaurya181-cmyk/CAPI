@@ -716,6 +716,7 @@
     .pill-failed  { background: #fde7e9; color: var(--destructive); }
     .pill-pending { background: #fff2d9; color: #a06400; }
     .pill-retrying { background: #fff2d9; color: #a06400; }
+    .pill-validated { background: #e6eefc; color: #2a5bb8; }
     .pill-none    { background: #f1ebe9; color: var(--muted); }
     .badge-set    { color: var(--success); font-weight: 600; }
     .badge-unset  { color: var(--muted); }
@@ -1082,6 +1083,7 @@
         failed: "pill-failed",
         pending: "pill-pending",
         retrying: "pill-retrying",
+        validated: "pill-validated",
       }[status] || "pill-none";
       return `<span class="pill ${cls}">${status}</span>`;
     }
