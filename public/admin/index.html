@@ -717,6 +717,11 @@
     .pill-pending { background: #fff2d9; color: #a06400; }
     .pill-retrying { background: #fff2d9; color: #a06400; }
     .pill-validated { background: #e6eefc; color: #2a5bb8; }
+    .pill-skipped { background: #f1ebe9; color: var(--muted); }
+    .toolbar-msg { font-size: 12px; color: var(--muted); }
+    .toolbar-msg.err { color: var(--destructive); }
+    .expansion-actions { display: flex; gap: 10px; align-items: center; padding: 10px 2px 0; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
     .pill-none    { background: #f1ebe9; color: var(--muted); }
     .badge-set    { color: var(--success); font-weight: 600; }
     .badge-unset  { color: var(--muted); }
@@ -831,6 +836,7 @@
         <nav>
           <button class="active" data-tab="visitors">Visitors</button>
           <button data-tab="conversions">Conversions</button>
+          <button data-tab="sync">Sync log</button>
         </nav>
       </aside>
       <main>
@@ -892,10 +898,16 @@
             <input type="date" id="conversions-to" class="hidden" />
             <select id="conversions-status">
               <option value="">All statuses</option>
+              <option value="unsent">Not sent yet (pending / retrying / failed)</option>
               <option value="pending">Pending</option>
-              <option value="failed">Failed / retrying</option>
+              <option value="retrying">Retrying</option>
+              <option value="failed">Failed</option>
+              <option value="validated">Validated (Google test)</option>
             </select>
             <button class="btn-ghost" id="conversions-refresh" type="button">Refresh</button>
+            <button class="btn-ghost" id="conversions-resend" type="button"
+              title="Send every pending, retrying or failed conversion again now">Resend unsent</button>
+            <span class="toolbar-msg" id="conversions-msg"></span>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -906,13 +918,49 @@
                   <th>Order ID</th>
                   <th>Source</th>
                   <th>Amount</th>
+                  <th>Matched by</th>
                   <th>Meta</th>
                   <th>Google</th>
                   <th>Click IDs</th>
                 </tr>
               </thead>
               <tbody id="conversions-body">
-                <tr><td colspan="8" class="muted center">Loading…</td></tr>
+                <tr><td colspan="9" class="muted center">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="tab-sync" class="tab hidden">
+          <div class="page-header">
+            <h2>Sync log</h2>
+            <div class="muted" id="sync-count">—</div>
+          </div>
+          <div class="toolbar">
+            <button class="btn-ghost" id="sync-refresh" type="button">Refresh</button>
+            <button class="btn-ghost" id="sync-run" type="button"
+              title="Pull new store sales from OrnaVerse now">Sync offline sales now</button>
+            <span class="toolbar-msg" id="sync-msg"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Started</th>
+                  <th>Source</th>
+                  <th>Trigger</th>
+                  <th>Status</th>
+                  <th class="num">Rows</th>
+                  <th class="num">Sent</th>
+                  <th class="num">Matched</th>
+                  <th class="num">With click</th>
+                  <th class="num">Duplicate</th>
+                  <th class="num">Failed</th>
+                </tr>
+              </thead>
+              <tbody id="sync-body">
+                <tr><td colspan="11" class="muted center">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1043,6 +1091,7 @@
         $("#tab-" + tab).classList.remove("hidden");
         if (tab === "visitors") loadVisitors();
         if (tab === "conversions") loadConversions();
+        if (tab === "sync") loadSync();
       });
     });
 
@@ -1084,6 +1133,11 @@
         pending: "pill-pending",
         retrying: "pill-retrying",
         validated: "pill-validated",
+        // sync run statuses
+        ok: "pill-success",
+        partial: "pill-retrying",
+        running: "pill-pending",
+        skipped: "pill-skipped",
       }[status] || "pill-none";
       return `<span class="pill ${cls}">${status}</span>`;
     }
@@ -1312,7 +1366,7 @@
     async function loadConversions() {
       const body = $("#conversions-body");
       const countEl = $("#conversions-count");
-      body.innerHTML = `<tr><td colspan="8" class="muted center">Loading…</td></tr>`;
+      body.innerHTML = `<tr><td colspan="9" class="muted center">Loading…</td></tr>`;
       countEl.textContent = "—";
 
       const params = buildRangeQuery("conversions");
@@ -1329,12 +1383,12 @@
 
         countEl.textContent = `${filtered.length} conversion${filtered.length === 1 ? "" : "s"}`;
         if (filtered.length === 0) {
-          body.innerHTML = `<tr><td colspan="8" class="muted center">No conversions match this filter.</td></tr>`;
+          body.innerHTML = `<tr><td colspan="9" class="muted center">No conversions match this filter.</td></tr>`;
           return;
         }
         body.innerHTML = filtered.map(renderConversionRow).join("");
       } catch (err) {
-        body.innerHTML = `<tr><td colspan="8" class="muted center">Failed to load: ${esc(err.message)}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" class="muted center">Failed to load: ${esc(err.message)}</td></tr>`;
       }
     }
 
@@ -1350,6 +1404,7 @@
           <td class="mono">${esc(c.order_id) || "—"}</td>
           <td>${sourceLabel}</td>
           <td>${fmtMoney(c.amount, c.currency)}</td>
+          <td>${c.matched_by ? esc(c.matched_by) : `<span class="muted">no visitor</span>`}</td>
           <td>${statusPill(c.meta_status)}</td>
           <td>${statusPill(c.google_status)}</td>
           <td>${[
@@ -1362,9 +1417,29 @@
       `;
     }
 
+    function renderSenderSection(title, r) {
+      return `
+          <div class="expansion-section">
+            <h4>${esc(title)}</h4>
+            ${kv("Status", r?.status)}
+            ${kv("Attempts", r?.retries ?? 0)}
+            ${kv("Sent at", r?.sent_at ? fmtDateTime(r.sent_at) : null)}
+            ${kv("Next retry", r?.next_retry_at ? fmtDateTime(r.next_retry_at) : null)}
+            ${kv("HTTP", r?.response_code)}
+            ${kv("Error", r?.error)}
+          </div>`;
+    }
+
+    function clickUsed(which, at) {
+      if (!which) return null;
+      return `${which} click${at ? " · " + fmtDateTime(at) : ""}`;
+    }
+
     async function renderConversionExpansion(orderId) {
       const c = await api(`/admin/api/conversions/${encodeURIComponent(orderId)}`);
       const addr = [c.city_hash, c.state_hash, c.zip_hash, c.country_hash].filter(Boolean).length;
+      const m = c.match || {};
+      const unsent = [c.meta_capi?.status, c.google_ads?.status].some((st) => st && st !== "success");
       return `
         <div class="expansion-card">
           <div class="expansion-section">
@@ -1373,7 +1448,17 @@
             ${kv("Source", c.source)}
             ${kv("Amount", fmtMoney(c.order_amount, c.currency))}
             ${kv("Event time", c.event_time ? fmtDateTime(c.event_time) : null)}
+            ${kv("Store", c.store_name)}
             ${kv("Action source", c.action_source)}
+            ${kv("Sync run", c.sync_run_id)}
+          </div>
+          <div class="expansion-section">
+            <h4>Visitor match</h4>
+            ${kv("Matched by", m.matched_by || (c.match ? "no visitor found" : null))}
+            ${kv("Visitor key", m.visitor_key, "hash")}
+            ${kv("Click mode", m.click_mode)}
+            ${kv("Meta click used", clickUsed(m.meta_click, m.meta_click_at))}
+            ${kv("Google click used", clickUsed(m.google_click, m.google_click_at))}
           </div>
           <div class="expansion-section">
             <h4>Click IDs</h4>
@@ -1385,22 +1470,8 @@
             ${kv("IP", c.client_ip_address)}
             ${kv("User-Agent", c.client_user_agent)}
           </div>
-          <div class="expansion-section">
-            <h4>Meta CAPI</h4>
-            ${kv("Status", c.meta_capi?.status)}
-            ${kv("Retries", c.meta_capi?.retries ?? 0)}
-            ${kv("Sent at", c.meta_capi?.sent_at ? fmtDateTime(c.meta_capi.sent_at) : null)}
-            ${kv("HTTP", c.meta_capi?.response_code)}
-            ${kv("Error", c.meta_capi?.error)}
-          </div>
-          <div class="expansion-section">
-            <h4>Google Ads</h4>
-            ${kv("Status", c.google_ads?.status)}
-            ${kv("Retries", c.google_ads?.retries ?? 0)}
-            ${kv("Sent at", c.google_ads?.sent_at ? fmtDateTime(c.google_ads.sent_at) : null)}
-            ${kv("HTTP", c.google_ads?.response_code)}
-            ${kv("Error", c.google_ads?.error)}
-          </div>
+          ${renderSenderSection("Meta CAPI", c.meta_capi)}
+          ${renderSenderSection("Google Ads", c.google_ads)}
           <div class="expansion-section">
             <h4>Hashes (sent)</h4>
             ${kv("Phone (Meta)", c.phone_meta, "hash")}
@@ -1409,7 +1480,96 @@
             ${kv("Address fields", addr ? `${addr} set` : null, "hash")}
           </div>
         </div>
+        ${unsent ? `
+        <div class="expansion-actions">
+          <button class="btn-ghost" type="button" data-retry="${esc(c.order_id)}">Send again now</button>
+          <span class="toolbar-msg"></span>
+        </div>` : ""}
       `;
+    }
+
+    // ---- Sync log page ----
+
+    const syncCache = new Map();
+
+    async function loadSync() {
+      const body = $("#sync-body");
+      const countEl = $("#sync-count");
+      body.innerHTML = `<tr><td colspan="11" class="muted center">Loading…</td></tr>`;
+      countEl.textContent = "—";
+      try {
+        const res = await api("/admin/api/sync-runs?limit=100");
+        countEl.textContent = `${res.count} run${res.count === 1 ? "" : "s"}`;
+        if (res.count === 0) {
+          body.innerHTML = `<tr><td colspan="11" class="muted center">No syncs yet.</td></tr>`;
+          return;
+        }
+        syncCache.clear();
+        for (const r of res.items) syncCache.set(r.id, r);
+        body.innerHTML = res.items.map(renderSyncRow).join("");
+      } catch (err) {
+        body.innerHTML = `<tr><td colspan="11" class="muted center">Failed to load: ${esc(err.message)}</td></tr>`;
+      }
+    }
+
+    const SOURCE_LABEL = { ornaverse_offline: "OrnaVerse", csv_upload: "CSV" };
+    const TRIGGER_LABEL = { schedule: "Scheduled", manual: "Manual", csv: "Upload" };
+
+    function renderSyncRow(r) {
+      return `
+        <tr class="row-main" data-key="${esc(r.id)}">
+          <td class="muted"><span class="chevron"></span></td>
+          <td>${fmtDateTime(r.started_at)}</td>
+          <td>${SOURCE_LABEL[r.source] || esc(r.source)}</td>
+          <td>${TRIGGER_LABEL[r.trigger] || esc(r.trigger)}</td>
+          <td>${statusPill(r.status)}${r.error ? ` <span class="muted">${esc(r.error)}</span>` : ""}</td>
+          <td class="num">${r.fetched ?? 0}</td>
+          <td class="num">${r.processed ?? 0}</td>
+          <td class="num">${r.matched ?? 0}</td>
+          <td class="num">${r.matched_with_click ?? 0}</td>
+          <td class="num">${r.skipped_duplicate ?? 0}</td>
+          <td class="num">${r.failed ?? 0}</td>
+        </tr>
+      `;
+    }
+
+    function renderSyncExpansion(id) {
+      const r = syncCache.get(id);
+      if (!r) return `<div class="muted center" style="padding:14px">Run not found.</div>`;
+      const shown = (r.failures || []).length;
+      const failures = (r.failures || []).map((f) => kv(f.sale_id, f.error)).join("");
+      return `
+        <div class="expansion-card">
+          <div class="expansion-section">
+            <h4>Run</h4>
+            ${kv("Run ID", r.id)}
+            ${kv("Started", fmtDateTime(r.started_at))}
+            ${kv("Finished", r.finished_at ? fmtDateTime(r.finished_at) : null)}
+            ${kv("Sales from", r.window_from ? fmtDateTime(r.window_from) : null)}
+            ${kv("Sales to", r.window_to ? fmtDateTime(r.window_to) : null)}
+            ${kv("Error", r.error)}
+          </div>
+          <div class="expansion-section">
+            <h4>Failed rows${r.failed > shown ? ` (first ${shown} of ${r.failed})` : ""}</h4>
+            ${failures || kv("None", null)}
+          </div>
+        </div>
+      `;
+    }
+
+    // Run an action button: disable while busy, show the outcome next to it.
+    async function runAction(btn, msgEl, fn) {
+      btn.disabled = true;
+      msgEl.classList.remove("err");
+      msgEl.textContent = "Working…";
+      try {
+        msgEl.textContent = await fn();
+      } catch (err) {
+        msgEl.classList.add("err");
+        msgEl.textContent = "Failed: " + err.message;
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     // ---- Wire controls ----
@@ -1417,13 +1577,46 @@
     wireRangeToggle("visitors");
     wireRangeToggle("conversions");
     wireExpand("#visitors-body", 8, (key) => Promise.resolve(renderVisitorExpansion(key)));
-    wireExpand("#conversions-body", 8, (orderId) => renderConversionExpansion(orderId));
+    wireExpand("#conversions-body", 9, (orderId) => renderConversionExpansion(orderId));
+    wireExpand("#sync-body", 11, (id) => Promise.resolve(renderSyncExpansion(id)));
 
     $("#visitors-search").addEventListener("input", debounce(loadVisitors, 350));
     $("#conversions-search").addEventListener("input", debounce(loadConversions, 200));
     $("#conversions-status").addEventListener("change", loadConversions);
     $("#visitors-refresh").addEventListener("click", loadVisitors);
     $("#conversions-refresh").addEventListener("click", loadConversions);
+    $("#sync-refresh").addEventListener("click", loadSync);
+
+    $("#sync-run").addEventListener("click", (e) =>
+      runAction(e.currentTarget, $("#sync-msg"), async () => {
+        const r = await api("/admin/api/sync-offline", { method: "POST", body: "{}" });
+        loadSync();
+        return r.status === "skipped"
+          ? `Skipped: ${r.error}`
+          : `${r.status}: ${r.processed} sent, ${r.matched} matched, ${r.failed} failed`;
+      })
+    );
+
+    $("#conversions-resend").addEventListener("click", (e) =>
+      runAction(e.currentTarget, $("#conversions-msg"), async () => {
+        const r = await api("/admin/api/sync-now", { method: "POST", body: "{}" });
+        loadConversions();
+        return `Sent again: ${r.dispatched}${r.errored ? `, ${r.errored} errored` : ""}`;
+      })
+    );
+
+    // "Send again now" inside an expanded conversion.
+    $("#conversions-body").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-retry]");
+      if (!btn) return;
+      runAction(btn, btn.nextElementSibling, async () => {
+        await api(`/admin/api/conversions/${encodeURIComponent(btn.dataset.retry)}/retry`, {
+          method: "POST",
+          body: "{}",
+        });
+        return "Sending… refresh in a few seconds to see the result.";
+      });
+    });
 
     function bootApp() {
       showApp();

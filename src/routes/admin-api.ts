@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { Timestamp } from "@google-cloud/firestore";
+import { Filter, Timestamp } from "@google-cloud/firestore";
 import {
   conversionsCol,
   getConversion,
@@ -7,6 +7,7 @@ import {
   type ConversionLog,
   type GoogleClick,
   type MetaClick,
+  type SenderResult,
   type SendStatus,
   type Visitor,
 } from "../lib/firestore.js";
@@ -63,6 +64,15 @@ function applyRange(
   if (range.from) q = q.where("created_at", ">=", range.from);
   if (range.to) q = q.where("created_at", "<=", range.to);
   return q;
+}
+
+function serializeSender(r?: SenderResult) {
+  if (!r) return undefined;
+  return {
+    ...r,
+    sent_at: r.sent_at?.toDate().toISOString(),
+    next_retry_at: r.next_retry_at?.toDate().toISOString(),
+  };
 }
 
 export default async function adminApiRoute(app: FastifyInstance): Promise<void> {
@@ -178,10 +188,22 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
     const range = parseRange(req.query);
     let q: FirebaseFirestore.Query = conversionsCol;
 
-    if (req.query.status === "failed") {
-      q = q.where("meta_capi.status", "in", ["failed", "retrying"]);
-    } else if (req.query.status === "pending") {
-      q = q.where("meta_capi.status", "==", "pending");
+    // Status filter matches if either sender is in that state.
+    const statusFilter: Record<string, SendStatus[]> = {
+      pending: ["pending"],
+      retrying: ["retrying"],
+      failed: ["failed"],
+      validated: ["validated"],
+      unsent: BAD_STATUSES,
+    };
+    const statuses = statusFilter[req.query.status ?? ""];
+    if (statuses) {
+      q = q.where(
+        Filter.or(
+          Filter.where("meta_capi.status", "in", statuses),
+          Filter.where("google_ads.status", "in", statuses)
+        )
+      );
     }
     q = applyRange(q, range).orderBy("created_at", "desc").limit(limit);
 
@@ -191,6 +213,8 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
         return {
           order_id: log.order_id,
           source: log.source,
+          store_name: log.store_name,
+          matched_by: log.match?.matched_by ?? null,
           amount: log.order_amount,
           currency: log.currency,
           created_at: log.created_at?.toDate().toISOString(),
@@ -221,12 +245,15 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
         created_at: log.created_at?.toDate().toISOString(),
         updated_at: log.updated_at?.toDate().toISOString(),
         event_time: log.event_time?.toDate().toISOString(),
-        meta_capi: log.meta_capi
-          ? { ...log.meta_capi, sent_at: log.meta_capi.sent_at?.toDate().toISOString() }
+        match: log.match
+          ? {
+              ...log.match,
+              meta_click_at: log.match.meta_click_at?.toDate().toISOString(),
+              google_click_at: log.match.google_click_at?.toDate().toISOString(),
+            }
           : undefined,
-        google_ads: log.google_ads
-          ? { ...log.google_ads, sent_at: log.google_ads.sent_at?.toDate().toISOString() }
-          : undefined,
+        meta_capi: serializeSender(log.meta_capi),
+        google_ads: serializeSender(log.google_ads),
       });
     }
   );
