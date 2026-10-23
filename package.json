@@ -11,7 +11,8 @@
     "start": "node dist/server.js",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "meta:test": "tsx scripts/meta-test-event.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",

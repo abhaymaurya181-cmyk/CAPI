@@ -136,6 +136,10 @@ export interface ConversionLog {
   city_hash?: string | null;
   state_hash?: string | null;
   country_hash?: string | null;
+  // From the matched visitor (Meta only).
+  dob_hash?: string | null;
+  gender_hash?: string | null;
+  external_id?: string;
   gclid?: string;
   gbraid?: string;
   wbraid?: string;
