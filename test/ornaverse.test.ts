@@ -1,0 +1,245 @@
+import { test, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import {
+  _resetTokenCache,
+  fetchOrnaverseSales,
+  getOrnaverseToken,
+  joinPhone,
+  mapInvoiceRow,
+  parseOrnaverseDate,
+  splitPartyName,
+  type InvoiceRow,
+} from "../src/importers/ornaverse.js";
+
+/** Build a tiny stand-in for fetch that returns the queued responses in order. */
+function mockFetch(responses: Array<{ status?: number; body: unknown }>): {
+  fetch: typeof fetch;
+  calls: Array<{ url: string; init: RequestInit | undefined }>;
+} {
+  const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+  const impl: typeof fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : (input as Request).url;
+    calls.push({ url, init });
+    const next = responses.shift();
+    if (!next) throw new Error("mock_fetch_out_of_responses:" + url);
+    return new Response(JSON.stringify(next.body), {
+      status: next.status ?? 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  return { fetch: impl, calls };
+}
+
+const ORIG = { ...process.env };
+beforeEach(() => {
+  _resetTokenCache();
+  process.env.ORNAVERSE_API_BASE = "https://test.ornaverse.in";
+  process.env.ORNAVERSE_CLIENT_ID = "cid";
+  process.env.ORNAVERSE_CLIENT_SECRET = "sec";
+  delete process.env.ORNAVERSE_POSTED_STATUSES;
+});
+afterEach(() => {
+  for (const k of Object.keys(process.env)) if (!(k in ORIG)) delete process.env[k];
+  Object.assign(process.env, ORIG);
+});
+
+// ---------- small units ----------
+
+test("splitPartyName: single-word, two-word, three-word, empty", () => {
+  assert.deepEqual(splitPartyName("Abhay"), { first: "Abhay" });
+  assert.deepEqual(splitPartyName("Abhay Maurya"), { first: "Abhay", last: "Maurya" });
+  assert.deepEqual(splitPartyName("Rohan Kumar Sharma"), { first: "Rohan Kumar", last: "Sharma" });
+  assert.deepEqual(splitPartyName(""), {});
+  assert.deepEqual(splitPartyName("   "), {});
+});
+
+test("joinPhone: adds + and country code; strips non-digits", () => {
+  assert.equal(joinPhone("91", "9988007700"), "+919988007700");
+  assert.equal(joinPhone("+91", "99880-07700"), "+919988007700");
+  assert.equal(joinPhone(undefined, "9988007700"), "9988007700");
+  assert.equal(joinPhone("91", undefined), undefined);
+  assert.equal(joinPhone("91", "   "), undefined);
+});
+
+test("parseOrnaverseDate: naive IST, explicit offset, invalid", () => {
+  // 2026-10-24T10:00:00 IST = 04:30 UTC
+  assert.equal(parseOrnaverseDate("2026-10-24T10:00:00"), Date.parse("2026-10-24T04:30:00Z"));
+  assert.equal(parseOrnaverseDate("2026-10-24T10:00:00Z"), Date.parse("2026-10-24T10:00:00Z"));
+  assert.equal(parseOrnaverseDate("2026-10-24T10:00:00+05:30"), Date.parse("2026-10-24T04:30:00Z"));
+  assert.equal(parseOrnaverseDate(""), null);
+  assert.equal(parseOrnaverseDate(undefined), null);
+  assert.equal(parseOrnaverseDate("garbage"), null);
+});
+
+test("mapInvoiceRow: happy path", () => {
+  const row: InvoiceRow = {
+    transaction_id: 12345,
+    document_no: "LUC-0001",
+    document_date: "2026-10-24T10:00:00",
+    document_status: 2,
+    net_amount: 49999,
+    phone_code: "91",
+    mobile: "9988007700",
+    email: "priya@gmail.com",
+    party_name: "Priya Sharma",
+    shipping_city: "Mumbai",
+    shipping_state: "MH",
+    shipping_pin_code: "400001",
+    mailing_name: "Lucira Pune",
+  };
+  const sale = mapInvoiceRow(row);
+  assert.ok(sale);
+  assert.equal(sale!.sale_id, "12345");
+  assert.equal(sale!.amount, 49999);
+  assert.equal(sale!.currency, "INR");
+  assert.equal(sale!.phone, "+919988007700");
+  assert.equal(sale!.email, "priya@gmail.com");
+  assert.equal(sale!.first_name, "Priya");
+  assert.equal(sale!.last_name, "Sharma");
+  assert.equal(sale!.city, "Mumbai");
+  assert.equal(sale!.state, "MH");
+  assert.equal(sale!.zip, "400001");
+  assert.equal(sale!.country, "IN");
+  assert.equal(sale!.store_name, "Lucira Pune");
+  assert.equal(sale!.event_time.toISOString(), "2026-10-24T04:30:00.000Z");
+});
+
+test("mapInvoiceRow: missing transaction_id or document_date → null", () => {
+  assert.equal(mapInvoiceRow({ transaction_id: 1 }), null); // no date
+  assert.equal(mapInvoiceRow({ document_date: "2026-10-24T10:00:00" }), null); // no id
+});
+
+// ---------- token caching ----------
+
+test("getOrnaverseToken: caches token until near expiry", async () => {
+  const { fetch: f, calls } = mockFetch([
+    { body: { access_token: "tok-1", expires_in: 3600 } },
+  ]);
+  const t1 = await getOrnaverseToken(f);
+  const t2 = await getOrnaverseToken(f); // same cached value
+  assert.equal(t1, "tok-1");
+  assert.equal(t2, "tok-1");
+  assert.equal(calls.length, 1, "token should be fetched only once");
+});
+
+test("getOrnaverseToken: refreshes when near expiry", async () => {
+  const { fetch: f } = mockFetch([
+    { body: { access_token: "tok-1", expires_in: 30 } }, // < 60s skew window
+    { body: { access_token: "tok-2", expires_in: 3600 } },
+  ]);
+  const t1 = await getOrnaverseToken(f);
+  const t2 = await getOrnaverseToken(f);
+  assert.equal(t1, "tok-1");
+  assert.equal(t2, "tok-2");
+});
+
+test("getOrnaverseToken: non-200 throws", async () => {
+  const { fetch: f } = mockFetch([{ status: 401, body: { error: "invalid_client" } }]);
+  await assert.rejects(getOrnaverseToken(f), /ornaverse_token_failed:401/);
+});
+
+// ---------- pagination ----------
+
+test("fetchOrnaverseSales: single page, filters out rows outside window", async () => {
+  const from = new Date("2026-10-24T00:00:00Z");
+  const to = new Date("2026-10-24T12:00:00Z");
+  const { fetch: f } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    {
+      body: {
+        Entities: [
+          { transaction_id: 1, document_date: "2026-10-24T10:00:00Z", modification_date: "2026-10-24T10:00:00Z", net_amount: 100, mobile: "9988001001", phone_code: "91" }, // in window
+          { transaction_id: 2, document_date: "2026-10-23T10:00:00Z", modification_date: "2026-10-23T10:00:00Z", net_amount: 200 }, // before from
+          { transaction_id: 3, document_date: "2026-10-24T15:00:00Z", modification_date: "2026-10-24T15:00:00Z", net_amount: 300 }, // after to
+        ],
+        TotalCount: 3,
+      },
+    },
+  ]);
+  const sales = await fetchOrnaverseSales(from, to, f);
+  // Row 2's modification_date is before `from`, which triggers the early-stop
+  // after processing this page. Rows 1 and 3 are checked individually.
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].sale_id, "1");
+});
+
+test("fetchOrnaverseSales: stops paging when a page's oldest row predates from", async () => {
+  const from = new Date("2026-10-24T00:00:00Z");
+  const to = new Date("2026-10-24T12:00:00Z");
+  // Page 1 has one row older than `from` — must stop, must NOT fetch page 2.
+  const { fetch: f, calls } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    {
+      body: {
+        Entities: [
+          { transaction_id: 101, document_date: "2026-10-24T11:00:00Z", modification_date: "2026-10-24T11:00:00Z", net_amount: 500 },
+          { transaction_id: 102, document_date: "2026-10-23T22:00:00Z", modification_date: "2026-10-23T22:00:00Z", net_amount: 500 },
+        ],
+        TotalCount: 999, // pretend lots more exist
+      },
+    },
+  ]);
+  const sales = await fetchOrnaverseSales(from, to, f);
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].sale_id, "101");
+  // 2 calls total: token + 1 page. No second page.
+  assert.equal(calls.length, 2);
+});
+
+test("fetchOrnaverseSales: paginates when every page is in-window and full", async () => {
+  const from = new Date("2026-10-24T00:00:00Z");
+  const to = new Date("2026-10-24T23:59:59Z");
+  // Build a page of exactly 100 rows all in-window.
+  const page = (startId: number, modStartMs: number) => ({
+    Entities: Array.from({ length: 100 }, (_, i) => ({
+      transaction_id: startId + i,
+      document_date: "2026-10-24T10:00:00Z",
+      modification_date: new Date(modStartMs - i * 1000).toISOString(),
+      net_amount: 10,
+    })),
+    TotalCount: 250,
+  });
+  const t0 = Date.parse("2026-10-24T20:00:00Z");
+  const t1 = Date.parse("2026-10-24T12:00:00Z");
+  const t2 = Date.parse("2026-10-24T05:00:00Z");
+  const { fetch: f, calls } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    { body: page(1, t0) },     // oldest ~20:00 Z — still > from, keep going
+    { body: page(101, t1) },   // oldest ~12:00 Z — still > from
+    { body: page(201, t2) },   // oldest ~05:00 Z — still > from (but short page would stop)
+    { body: { Entities: [] } }, // empty = stop
+  ]);
+  const sales = await fetchOrnaverseSales(from, to, f);
+  assert.equal(sales.length, 300);
+  assert.equal(calls.length, 5); // token + 4 list calls
+});
+
+test("fetchOrnaverseSales: ORNAVERSE_POSTED_STATUSES drops rows with other statuses", async () => {
+  process.env.ORNAVERSE_POSTED_STATUSES = "2,3";
+  const from = new Date("2026-10-24T00:00:00Z");
+  const to = new Date("2026-10-25T00:00:00Z");
+  const { fetch: f } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    {
+      body: {
+        Entities: [
+          { transaction_id: 10, document_date: "2026-10-24T10:00:00Z", modification_date: "2026-10-24T10:00:00Z", net_amount: 100, document_status: 2 }, // keep
+          { transaction_id: 11, document_date: "2026-10-24T11:00:00Z", modification_date: "2026-10-24T11:00:00Z", net_amount: 200, document_status: 1 }, // drop
+          { transaction_id: 12, document_date: "2026-10-24T12:00:00Z", modification_date: "2026-10-24T12:00:00Z", net_amount: 300, document_status: 3 }, // keep
+        ],
+        TotalCount: 3,
+      },
+    },
+  ]);
+  const sales = await fetchOrnaverseSales(from, to, f);
+  const ids = sales.map((s) => s.sale_id).sort();
+  assert.deepEqual(ids, ["10", "12"]);
+});
+
+test("fetchOrnaverseSales: not configured → throws", async () => {
+  delete process.env.ORNAVERSE_CLIENT_ID;
+  await assert.rejects(
+    fetchOrnaverseSales(new Date(), new Date()),
+    /ornaverse_not_configured/
+  );
+});
