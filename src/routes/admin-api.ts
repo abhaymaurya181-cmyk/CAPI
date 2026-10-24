@@ -15,6 +15,9 @@ import { clickMode } from "../lib/click-ids.js";
 import { requireBearer } from "../lib/auth.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
 import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
+import { buildConversion, type SaleInput } from "../lib/matcher.js";
+import { buildMetaPayload, metaPreflightError } from "../senders/meta.js";
+import { buildGooglePayload, googleConfig, googlePreflightError } from "../senders/google.js";
 
 const BAD_STATUSES: SendStatus[] = ["pending", "failed", "retrying"];
 
@@ -322,6 +325,99 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
       return reply.send(serializeVisitor(snap.id, snap.data() as Visitor));
     }
   );
+
+  // Preview an existing conversion row — exact payloads that would reach
+  // Meta + Google. Purely read-only, zero network. For engineer debugging
+  // and demos: "here's what we WOULD send for this sale."
+  app.get<{ Params: { orderId: string } }>(
+    "/admin/api/conversions/:orderId/preview",
+    async (req, reply) => {
+      if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+      const log = await getConversion(req.params.orderId);
+      if (!log) return reply.code(404).send({ error: "not_found" });
+      return reply.send(previewPayloads(log, { simulated: false }));
+    }
+  );
+
+  // Preview a HYPOTHETICAL sale against an existing visitor. Lets you
+  // demo the end-to-end payload before OrnaVerse credentials arrive:
+  // "if this visitor buys ₹X at store Y right now, this is exactly what
+  //  Meta and Google receive." No Firestore writes, no network calls.
+  app.get<{
+    Params: { key: string };
+    Querystring: { amount?: string; currency?: string; store?: string };
+  }>("/admin/api/visitors/:key/preview", async (req, reply) => {
+    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    const snap = await visitorsCol.doc(req.params.key).get();
+    if (!snap.exists) return reply.code(404).send({ error: "not_found" });
+    const visitor = snap.data() as Visitor;
+    const amount = Number(req.query.amount || 50000);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return reply.code(400).send({ error: "invalid_amount" });
+    }
+    const sale: SaleInput = {
+      sale_id: `preview-${Date.now()}`,
+      amount,
+      currency: (req.query.currency || "INR").toUpperCase(),
+      event_time: new Date(),
+      phone: visitor.raw_phone,
+      email: visitor.raw_email,
+      first_name: visitor.raw_first_name,
+      last_name: visitor.raw_last_name,
+      zip: visitor.raw_zip,
+      city: visitor.raw_city,
+      state: visitor.raw_state,
+      country: visitor.raw_country,
+      store_name: req.query.store || undefined,
+    };
+    const log: ConversionLog = {
+      ...buildConversion(sale, "ornaverse_offline", { visitor, key: snap.id, matched_by: "phone" }),
+      created_at: Timestamp.now(),
+      updated_at: Timestamp.now(),
+    };
+    return reply.send({ sale, ...previewPayloads(log, { simulated: true }) });
+  });
+}
+
+function previewPayloads(log: ConversionLog, opts: { simulated: boolean }) {
+  const testCode = process.env.META_TEST_EVENT_CODE || undefined;
+  const metaPayload = buildMetaPayload(log, testCode);
+  const metaErr = metaPreflightError(log);
+  const pixelId = process.env.META_PIXEL_ID || "<META_PIXEL_ID-not-set>";
+  const metaVersion = process.env.META_API_VERSION || "v20.0";
+
+  const gcfg = googleConfig();
+  const googleErr = googlePreflightError(log);
+  const googleSection = gcfg
+    ? {
+        endpoint: `https://datamanager.googleapis.com/v1/audiencePartners/${gcfg.customerId}:ingestEvents`,
+        config_present: true,
+        preflight_error: googleErr,
+        would_be_sent: !googleErr,
+        payload: buildGooglePayload(log, gcfg),
+      }
+    : {
+        endpoint: null,
+        config_present: false,
+        preflight_error: "google_config_missing",
+        would_be_sent: false,
+        payload: null,
+      };
+
+  return {
+    simulated: opts.simulated,
+    order_id: log.order_id,
+    source: log.source,
+    event_time: log.event_time.toDate().toISOString(),
+    action_source: log.action_source,
+    meta: {
+      endpoint: `https://graph.facebook.com/${metaVersion}/${pixelId}/events`,
+      preflight_error: metaErr,
+      would_be_sent: !metaErr,
+      payload: metaPayload,
+    },
+    google: googleSection,
+  };
 }
 
 function iso(t?: Timestamp): string | null {
