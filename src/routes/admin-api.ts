@@ -371,6 +371,7 @@ function serializeVisitor(key: string, v: Visitor) {
     cookie_ids: v.cookie_ids ?? [],
     client_ip: v.client_ip_address ?? null,
     client_user_agent: v.client_user_agent ?? null,
+    geo: v.geo ?? null,
     // Behavioral
     touchpoints: v.touchpoints ?? [],
     first_seen_at: v.first_seen_at?.toDate().toISOString() ?? null,

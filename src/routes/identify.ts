@@ -44,6 +44,26 @@ function cookieDomainFromHost(host?: string): string | undefined {
   return "." + parts.slice(-2).join(".");
 }
 
+// Cloud Run (and GCP Load Balancer) populates these from the client IP. Empty
+// on local dev. Returns undefined when nothing's set so Firestore's
+// ignoreUndefinedProperties strips an empty object instead of writing it.
+function readGeoHeaders(
+  headers: FastifyRequest["headers"]
+): { country?: string; region?: string; city?: string; lat_long?: string } | undefined {
+  const h = (k: string) => {
+    const v = headers[k];
+    const s = Array.isArray(v) ? v[0] : v;
+    return s && typeof s === "string" && s !== "ZZ" ? s : undefined;
+  };
+  const geo = {
+    country: h("x-appengine-country"),
+    region: h("x-appengine-region"),
+    city: h("x-appengine-city"),
+    lat_long: h("x-appengine-citylatlong"),
+  };
+  return Object.values(geo).some((v) => v) ? geo : undefined;
+}
+
 function ensureLcid(req: FastifyRequest, reply: FastifyReply): string {
   const existing = req.cookies?.[LCID_COOKIE];
   if (existing) return existing;
@@ -208,6 +228,7 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
       shopify_customer_id: body.shopify_customer_id,
       client_ip_address: req.ip,
       client_user_agent: req.headers["user-agent"] ?? undefined,
+      geo: readGeoHeaders(req.headers),
       // arrayUnion appends uniquely; cast required because the typed field is string[]
       touchpoints: FieldValue.arrayUnion(body.event) as unknown as string[],
     };

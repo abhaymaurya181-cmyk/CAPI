@@ -102,6 +102,16 @@ export interface Visitor {
   // Device context from the last /identify POST, sent as-is to Meta.
   client_ip_address?: string;
   client_user_agent?: string;
+  // IP-derived geolocation from Cloud Run's X-Appengine-* headers. Admin UI
+  // display only — never sent to Meta/Google (their systems do their own IP
+  // geo and sending our guess can hurt match quality). City-level accuracy
+  // on fixed broadband, state-level on mobile — treat as approximate.
+  geo?: {
+    country?: string;
+    region?: string;
+    city?: string;
+    lat_long?: string;
+  };
   first_seen_at: Timestamp;
   last_seen_at: Timestamp;
   touchpoints?: string[];
