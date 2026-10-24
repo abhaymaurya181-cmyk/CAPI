@@ -8,9 +8,12 @@ import type { SaleInput } from "../lib/matcher.js";
  * pagination, mapping and status filtering. The matcher takes it from there.
  *
  * Auth: OAuth2 client_credentials against `${ORNAVERSE_API_BASE}/connect/token`.
- * Pagination: Sort by `modification_date` DESC, Skip/Take, stop when the oldest
- * row in a page is older than `from` (ListResponse has no cursor; the API's
- * Criteria DSL is undocumented so we don't try date-range filters there).
+ * Pagination: Skip/Take, no Sort — any `Sort` clause 500s on Lucira's tenant.
+ * The server's default order is transaction_id DESC (= document_date DESC in
+ * practice), so Skip paging gives us newest-first naturally. We stop as soon
+ * as a page's oldest document_date predates `from`.
+ * Status filter: pushed server-side via EqualityFilter when configured, with
+ * a client-side belt-and-suspenders check in case the server ignores it.
  * Deduplication: handled upstream by `conversions_log/<sale_id>`; we just
  * surface every row inside the window.
  */
@@ -37,13 +40,18 @@ export async function getOrnaverseToken(fetchImpl: typeof fetch = fetch): Promis
   if (cachedToken && cachedToken.expires_at_ms - 60_000 > now) {
     return cachedToken.value;
   }
-  const base = process.env.ORNAVERSE_API_BASE!;
+  const base = process.env.ORNAVERSE_API_BASE!.replace(/\/+$/, "");
   const clientId = process.env.ORNAVERSE_CLIENT_ID!;
   const clientSecret = process.env.ORNAVERSE_CLIENT_SECRET!;
+  // OrnaVerse (OpenIddict) rejects token requests without a scope. Lucira's
+  // tenant accepts "openid"; other tenants may use a different value, so make
+  // it env-overridable without a redeploy.
+  const scope = process.env.ORNAVERSE_SCOPE || "openid";
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: clientId,
     client_secret: clientSecret,
+    scope,
   });
   const res = await fetchImpl(`${base}/connect/token`, {
     method: "POST",
@@ -96,7 +104,7 @@ export async function fetchInvoicePage(
   body: Record<string, unknown>,
   fetchImpl: typeof fetch = fetch
 ): Promise<ListResponse> {
-  const base = process.env.ORNAVERSE_API_BASE!;
+  const base = process.env.ORNAVERSE_API_BASE!.replace(/\/+$/, "");
   const res = await fetchImpl(`${base}/Services/POS/Invoice/List`, {
     method: "POST",
     headers: {
@@ -180,8 +188,9 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 50; // Safety: 5,000 rows per sync.
 
 /**
- * Pull every POSTED invoice modified in [from, to). Sorts by modification_date
- * DESC and stops as soon as a page's oldest row is older than `from`.
+ * Pull every POSTED invoice whose document_date falls in [from, to).
+ * Walks Skip/Take pages in the server's default newest-first order and
+ * stops when the oldest row on a page is older than `from`.
  */
 export async function fetchOrnaverseSales(
   from: Date,
@@ -195,25 +204,36 @@ export async function fetchOrnaverseSales(
   const toMs = to.getTime();
   const out: SaleInput[] = [];
 
+  // Server-side status filter when configured. EqualityFilter accepts a
+  // scalar (=) or an array (IN) per docs; we send scalar when only one
+  // code is allowed, array when multiple.
+  const statusFilter = (() => {
+    if (!allowedStatuses || allowedStatuses.size === 0) return undefined;
+    const arr = [...allowedStatuses];
+    return arr.length === 1 ? arr[0] : arr;
+  })();
+
   for (let page = 0; page < MAX_PAGES; page++) {
     const body: Record<string, unknown> = {
       Skip: page * PAGE_SIZE,
       Take: PAGE_SIZE,
-      Sort: [{ Field: "modification_date", Descending: true }],
     };
+    if (statusFilter !== undefined) {
+      body.EqualityFilter = { document_status: statusFilter };
+    }
     const resp = await fetchInvoicePage(token, body, fetchImpl);
     const rows = resp.Entities ?? [];
     if (rows.length === 0) break;
 
     let oldestOnPageMs = Infinity;
     for (const row of rows) {
-      // Status filter: if we know the posted codes, drop anything else.
+      // Belt-and-suspenders in case the server ignored the EqualityFilter.
       if (allowedStatuses && row.document_status != null && !allowedStatuses.has(row.document_status)) {
         continue;
       }
-      const modMs = parseOrnaverseDate(row.modification_date);
-      if (modMs != null) oldestOnPageMs = Math.min(oldestOnPageMs, modMs);
-      if (modMs != null && (modMs < fromMs || modMs >= toMs)) continue;
+      const docMs = parseOrnaverseDate(row.document_date);
+      if (docMs != null) oldestOnPageMs = Math.min(oldestOnPageMs, docMs);
+      if (docMs != null && (docMs < fromMs || docMs >= toMs)) continue;
       const sale = mapInvoiceRow(row);
       if (sale) out.push(sale);
     }

@@ -138,6 +138,27 @@ test("getOrnaverseToken: non-200 throws", async () => {
   await assert.rejects(getOrnaverseToken(f), /ornaverse_token_failed:401/);
 });
 
+test("getOrnaverseToken: sends scope (default openid, env override wins)", async () => {
+  // Default scope
+  {
+    const { fetch: f, calls } = mockFetch([{ body: { access_token: "t", expires_in: 3600 } }]);
+    await getOrnaverseToken(f);
+    const body = calls[0].init?.body as string;
+    assert.match(body, /scope=openid/);
+    assert.match(body, /grant_type=client_credentials/);
+  }
+  // Overridden scope
+  _resetTokenCache();
+  process.env.ORNAVERSE_SCOPE = "custom.scope";
+  {
+    const { fetch: f, calls } = mockFetch([{ body: { access_token: "t", expires_in: 3600 } }]);
+    await getOrnaverseToken(f);
+    const body = calls[0].init?.body as string;
+    assert.match(body, /scope=custom\.scope/);
+  }
+  delete process.env.ORNAVERSE_SCOPE;
+});
+
 // ---------- pagination ----------
 
 test("fetchOrnaverseSales: single page, filters out rows outside window", async () => {
@@ -242,4 +263,50 @@ test("fetchOrnaverseSales: not configured → throws", async () => {
     fetchOrnaverseSales(new Date(), new Date()),
     /ornaverse_not_configured/
   );
+});
+
+test("fetchOrnaverseSales: list body never includes Sort (triggers 500 on OrnaVerse)", async () => {
+  const from = new Date("2026-10-24T00:00:00Z");
+  const to = new Date("2026-10-25T00:00:00Z");
+  const { fetch: f, calls } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    { body: { Entities: [], TotalCount: 0 } },
+  ]);
+  await fetchOrnaverseSales(from, to, f);
+  const listCall = calls[1];
+  assert.ok(listCall.init?.body, "list body must be present");
+  const body = JSON.parse(String(listCall.init!.body));
+  assert.equal(body.Sort, undefined, "Sort must be omitted — any Sort clause 500s");
+});
+
+test("fetchOrnaverseSales: ORNAVERSE_POSTED_STATUSES=1 sends EqualityFilter as scalar", async () => {
+  process.env.ORNAVERSE_POSTED_STATUSES = "1";
+  const { fetch: f, calls } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    { body: { Entities: [], TotalCount: 0 } },
+  ]);
+  await fetchOrnaverseSales(new Date("2026-10-24T00:00:00Z"), new Date("2026-10-25T00:00:00Z"), f);
+  const body = JSON.parse(String(calls[1].init!.body));
+  assert.deepEqual(body.EqualityFilter, { document_status: 1 });
+});
+
+test("fetchOrnaverseSales: ORNAVERSE_POSTED_STATUSES=1,2 sends EqualityFilter as array (IN)", async () => {
+  process.env.ORNAVERSE_POSTED_STATUSES = "1,2";
+  const { fetch: f, calls } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    { body: { Entities: [], TotalCount: 0 } },
+  ]);
+  await fetchOrnaverseSales(new Date("2026-10-24T00:00:00Z"), new Date("2026-10-25T00:00:00Z"), f);
+  const body = JSON.parse(String(calls[1].init!.body));
+  assert.deepEqual(body.EqualityFilter, { document_status: [1, 2] });
+});
+
+test("fetchOrnaverseSales: no POSTED_STATUSES → no EqualityFilter in body", async () => {
+  const { fetch: f, calls } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    { body: { Entities: [], TotalCount: 0 } },
+  ]);
+  await fetchOrnaverseSales(new Date("2026-10-24T00:00:00Z"), new Date("2026-10-25T00:00:00Z"), f);
+  const body = JSON.parse(String(calls[1].init!.body));
+  assert.equal(body.EqualityFilter, undefined);
 });
