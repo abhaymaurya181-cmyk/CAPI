@@ -877,13 +877,11 @@
                   <th>Name</th>
                   <th>Phone</th>
                   <th>Email</th>
-                  <th>Shopify ID</th>
                   <th>Click IDs</th>
-                  <th>IP</th>
                 </tr>
               </thead>
               <tbody id="visitors-body">
-                <tr><td colspan="8" class="muted center">Loading…</td></tr>
+                <tr><td colspan="6" class="muted center">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1237,7 +1235,7 @@
     async function loadVisitors() {
       const body = $("#visitors-body");
       const countEl = $("#visitors-count");
-      body.innerHTML = `<tr><td colspan="8" class="muted center">Loading…</td></tr>`;
+      body.innerHTML = `<tr><td colspan="6" class="muted center">Loading…</td></tr>`;
       countEl.textContent = "—";
 
       const params = buildRangeQuery("visitors");
@@ -1249,7 +1247,7 @@
         const res = await api("/admin/api/visitors?" + params.toString());
         countEl.textContent = `${res.count} visitor${res.count === 1 ? "" : "s"}`;
         if (res.count === 0) {
-          body.innerHTML = `<tr><td colspan="8" class="muted center">No visitors match this filter.</td></tr>`;
+          body.innerHTML = `<tr><td colspan="6" class="muted center">No visitors match this filter.</td></tr>`;
           return;
         }
         // Cache full rows so expansion reads from memory (list already has the whole doc).
@@ -1257,7 +1255,7 @@
         for (const v of res.items) visitorCache.set(v.key, v);
         body.innerHTML = res.items.map(renderVisitorRow).join("");
       } catch (err) {
-        body.innerHTML = `<tr><td colspan="8" class="muted center">Failed to load: ${esc(err.message)}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="6" class="muted center">Failed to load: ${esc(err.message)}</td></tr>`;
       }
     }
 
@@ -1282,9 +1280,7 @@
           <td>${esc(name) || "—"}</td>
           <td class="mono">${esc(v.phone) || "—"}</td>
           <td class="mono">${esc(v.email) || "—"}</td>
-          <td class="mono">${esc(v.shopify_customer_id) || "—"}</td>
           <td>${clicks}</td>
-          <td class="mono">${esc(v.client_ip) || "—"}</td>
         </tr>
       `;
     }
@@ -1587,7 +1583,7 @@
 
     wireRangeToggle("visitors");
     wireRangeToggle("conversions");
-    wireExpand("#visitors-body", 8, (key) => Promise.resolve(renderVisitorExpansion(key)));
+    wireExpand("#visitors-body", 6, (key) => Promise.resolve(renderVisitorExpansion(key)));
     wireExpand("#conversions-body", 9, (orderId) => renderConversionExpansion(orderId));
     wireExpand("#sync-body", 11, (id) => Promise.resolve(renderSyncExpansion(id)));
 
