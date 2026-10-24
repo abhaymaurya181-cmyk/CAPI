@@ -377,9 +377,8 @@
     main {
       flex: 1;
       padding: 28px;
-      max-width: 1200px;
-      margin: 0 auto;
       width: 100%;
+      min-width: 0;
     }
 
     /* Dashboard pieces */
@@ -750,29 +749,39 @@
       border-bottom: 1px solid #ece5e2;
     }
     .expansion-card {
-      padding: 16px 22px;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 14px 28px;
+      padding: 24px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
     }
     .expansion-section {
       min-width: 0;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 22px;
     }
     .expansion-section h4 {
-      font-size: 11px;
+      font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--brand);
-      margin: 0 0 8px;
+      margin: 0 0 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
       font-weight: 600;
     }
     .kv-row {
       display: grid;
-      grid-template-columns: 110px 1fr;
-      gap: 8px;
-      font-size: 12px;
-      padding: 2px 0;
+      grid-template-columns: 200px 1fr;
+      gap: 16px;
+      font-size: 13px;
+      padding: 8px 0;
       align-items: baseline;
+      border-bottom: 1px dashed #f0eae7;
+    }
+    .kv-row:last-child {
+      border-bottom: 0;
     }
     .kv-key {
       color: var(--muted);
