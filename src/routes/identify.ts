@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
+import geoip from "geoip-lite";
 import { z } from "zod";
 import {
   FieldValue,
@@ -44,24 +45,23 @@ function cookieDomainFromHost(host?: string): string | undefined {
   return "." + parts.slice(-2).join(".");
 }
 
-// Cloud Run (and GCP Load Balancer) populates these from the client IP. Empty
-// on local dev. Returns undefined when nothing's set so Firestore's
-// ignoreUndefinedProperties strips an empty object instead of writing it.
-function readGeoHeaders(
-  headers: FastifyRequest["headers"]
+// IP-based geo lookup using an embedded MaxMind GeoLite2 database (offline,
+// no API calls). Vanilla Cloud Run doesn't attach X-Appengine-* headers, so
+// doing the lookup ourselves is the only way to show "where did this visitor
+// come from" in the admin UI. Admin-UI only — never sent to Meta/Google.
+function lookupGeo(
+  ip: string | undefined
 ): { country?: string; region?: string; city?: string; lat_long?: string } | undefined {
-  const h = (k: string) => {
-    const v = headers[k];
-    const s = Array.isArray(v) ? v[0] : v;
-    return s && typeof s === "string" && s !== "ZZ" ? s : undefined;
+  if (!ip) return undefined;
+  const r = geoip.lookup(ip);
+  if (!r) return undefined;
+  const out = {
+    country: r.country || undefined,
+    region: r.region || undefined,
+    city: r.city || undefined,
+    lat_long: r.ll ? `${r.ll[0]},${r.ll[1]}` : undefined,
   };
-  const geo = {
-    country: h("x-appengine-country"),
-    region: h("x-appengine-region"),
-    city: h("x-appengine-city"),
-    lat_long: h("x-appengine-citylatlong"),
-  };
-  return Object.values(geo).some((v) => v) ? geo : undefined;
+  return Object.values(out).some((v) => v) ? out : undefined;
 }
 
 function ensureLcid(req: FastifyRequest, reply: FastifyReply): string {
@@ -228,7 +228,7 @@ export default async function identifyRoute(app: FastifyInstance): Promise<void>
       shopify_customer_id: body.shopify_customer_id,
       client_ip_address: req.ip,
       client_user_agent: req.headers["user-agent"] ?? undefined,
-      geo: readGeoHeaders(req.headers),
+      geo: lookupGeo(req.ip),
       // arrayUnion appends uniquely; cast required because the typed field is string[]
       touchpoints: FieldValue.arrayUnion(body.event) as unknown as string[],
     };
