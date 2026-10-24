@@ -5,6 +5,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Lucira CAPI Admin</title>
+  <script>
+    try {
+      if (localStorage.getItem("lucira_capi_admin_token")) {
+        document.documentElement.classList.add("authed");
+      }
+    } catch {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
@@ -43,6 +50,13 @@
       background: var(--bg);
       color: var(--text);
     }
+
+    /* Pre-paint auth gate: inline <script> in <head> sets html.authed from
+       localStorage BEFORE first paint, so a logged-in user never sees the
+       login screen flash during a refresh. */
+    #app { display: none; }
+    html.authed #app { display: block; }
+    html.authed #login { display: none; }
 
     /* ---------- Login page (diagonal split) ---------- */
     .login-page {
@@ -820,7 +834,7 @@
     </div>
   </div>
 
-  <div id="app" class="hidden">
+  <div id="app">
     <header>
       <h1 class="sr-only">LUCIRA CAPI</h1>
       <img class="header-logo" src="https://cdn.shopify.com/s/files/1/0739/8516/3482/files/logo.svg?width=128"
@@ -1018,8 +1032,8 @@
       return body;
     }
 
-    function showLogin() { $("#login").classList.remove("hidden"); $("#app").classList.add("hidden"); }
-    function showApp() { $("#login").classList.add("hidden"); $("#app").classList.remove("hidden"); }
+    function showLogin() { document.documentElement.classList.remove("authed"); }
+    function showApp() { document.documentElement.classList.add("authed"); }
 
     function logout() {
       localStorage.removeItem(TOKEN_KEY);
@@ -1631,11 +1645,7 @@
     }
 
     if (token) {
-      // api() already handles 401 by logging out via its own guard. Any other
-      // failure (500 from a transient Firestore issue, missing index, etc.)
-      // shouldn't bounce the operator back to the login screen — boot the
-      // app anyway and let the inner pages surface their own error states.
-      api("/admin/api/stats").catch(() => {}).finally(bootApp);
+      bootApp();
     } else {
       showLogin();
     }
