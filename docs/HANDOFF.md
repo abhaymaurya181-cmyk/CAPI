@@ -164,7 +164,7 @@ Google: `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_CONVERSION_ACTION_OFFLINE`, option
 2. On "go": fix issues 1 + 3 (and 2 if needed) with tests; show the user before committing.
 3. Webhook pages + OrnaVerse answers → build 5b.
 4. Meta + Google creds → Meta test event, Google validateOnly → one OrnaVerse bill end to end.
-5. Deploy: Cloud Run + env/secrets, `deploy/cloud-scheduler.sh`, Firestore indexes, service account in
+5. Deploy: Cloud Run + env/secrets, `node deploy/deploy.mjs all` (see deploy/README.md), Firestore indexes, service account in
    Google Ads, `track.lucirajewelry.com`, tracker on site via GTM.
 6. Set `GOOGLE_VALIDATE_ONLY=false` → live.
 7. Later: returns/corrections, CSV upload page, fix "smaller" issues.

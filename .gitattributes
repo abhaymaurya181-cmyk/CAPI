@@ -1,2 +1,4 @@
 # Shell scripts must keep LF line endings, or bash fails on Windows checkouts.
 *.sh text eol=lf
+# Deploy script: one file for every OS; LF keeps the shebang working on Linux/macOS.
+*.mjs text eol=lf
