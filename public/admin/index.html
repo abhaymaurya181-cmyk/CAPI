@@ -1585,6 +1585,7 @@
             <h4>Visitor match</h4>
             ${kv("Matched by", m.matched_by || (c.match ? "no visitor found" : null))}
             ${kv("Visitor key", m.visitor_key, "hash")}
+            ${kv("Clicks also from", (m.merged_visitor_keys || []).join(", ") || null, "hash")}
             ${kv("Click mode", m.click_mode)}
             ${kv("Meta click used", clickUsed(m.meta_click, m.meta_click_at))}
             ${kv("Google click used", clickUsed(m.google_click, m.google_click_at))}

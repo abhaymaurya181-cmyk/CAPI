@@ -139,6 +139,8 @@ export interface SenderResult {
 export interface MatchInfo {
   matched_by: "phone" | "email" | null;
   visitor_key?: string;
+  // Other visitor docs of the same person that supplied an ad click.
+  merged_visitor_keys?: string[];
   click_mode: "first" | "last";
   // Which stored click was sent per platform, and when it happened.
   meta_click?: "first" | "last";
@@ -270,29 +272,50 @@ export interface VisitorMatch {
   visitor: Visitor;
   key: string;
   matched_by: "phone" | "email";
+  // Other visitor docs of the same person whose ad clicks were used (see
+  // combineCandidates in lib/matcher.ts). Absent for a single-doc match.
+  merged_keys?: string[];
 }
 
+// Per identifier, at most this many visitor docs are considered. One person
+// rarely has more than 2; the cap bounds reads if an id is shared (family phone).
+const MAX_DOCS_PER_IDENTIFIER = 5;
+
 /**
- * Look up a visitor by whichever identifier arrives on an order. Phone first
- * (it is the usual document key), then email. Each tries the document key,
- * then a field query for visitors keyed by something else.
+ * Every visitor doc that matches a sale's phone or email — one person can
+ * have several (signed up with email first, phone later). Order: phone
+ * matches first, then email, then the Google-format email hash, which also
+ * catches gmail dot / +tag variants (j.ohn@gmail.com = john@gmail.com).
+ * Each id tries the document key, then a field query; duplicates are dropped.
  */
-export async function findVisitorByIdentifiers(input: {
+export async function findVisitorCandidates(input: {
   phone_meta?: string | null;
   email_hash?: string | null;
-}): Promise<VisitorMatch | null> {
-  const tries: Array<["phone" | "email", "phone_meta" | "email_hash", string | null | undefined]> = [
-    ["phone", "phone_meta", input.phone_meta],
-    ["email", "email_hash", input.email_hash],
+  email_google_hash?: string | null;
+}): Promise<VisitorMatch[]> {
+  const found = new Map<string, VisitorMatch>();
+  const add = (snap: FirebaseFirestore.DocumentSnapshot, matched_by: "phone" | "email") => {
+    if (snap.exists && !found.has(snap.id)) {
+      found.set(snap.id, { visitor: snap.data() as Visitor, key: snap.id, matched_by });
+    }
+  };
+  const tries: Array<[
+    "phone" | "email",
+    "phone_meta" | "email_hash" | "email_google_hash",
+    string | null | undefined,
+    boolean, // can be a document key
+  ]> = [
+    ["phone", "phone_meta", input.phone_meta, true],
+    ["email", "email_hash", input.email_hash, true],
+    ["email", "email_google_hash", input.email_google_hash, false],
   ];
-  for (const [matched_by, field, value] of tries) {
+  for (const [matched_by, field, value, isKey] of tries) {
     if (!value) continue;
-    const direct = await visitorsCol.doc(value).get();
-    if (direct.exists) return { visitor: direct.data() as Visitor, key: direct.id, matched_by };
-    const q = await visitorsCol.where(field, "==", value).limit(1).get();
-    if (!q.empty) return { visitor: q.docs[0].data() as Visitor, key: q.docs[0].id, matched_by };
+    if (isKey) add(await visitorsCol.doc(value).get(), matched_by);
+    const q = await visitorsCol.where(field, "==", value).limit(MAX_DOCS_PER_IDENTIFIER).get();
+    for (const d of q.docs) add(d, matched_by);
   }
-  return null;
+  return [...found.values()];
 }
 
 export async function writeConversion(

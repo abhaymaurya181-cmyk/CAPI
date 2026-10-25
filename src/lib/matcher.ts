@@ -1,7 +1,7 @@
 import { Timestamp } from "@google-cloud/firestore";
 import {
   conversionsCol,
-  findVisitorByIdentifiers,
+  findVisitorCandidates,
   writeConversion,
   type ClickPair,
   type ConversionLog,
@@ -61,6 +61,62 @@ export function pickEligibleClick<T extends { captured_at: Timestamp }>(
   return null;
 }
 
+type Platform = "meta" | "google";
+
+/**
+ * One person can have several visitor docs. Combine them into one match:
+ * - per platform, the best eligible click across all docs (latest for
+ *   CLICK_MODE=last, earliest for first; before the sale and in the window);
+ * - every other field (fbp, IP, consent, external_id…) from the primary doc:
+ *   the one supplying the most clicks, then a phone match over an email
+ *   match, then the most recently seen.
+ * No I/O; deterministic for the same input.
+ */
+export function combineCandidates(
+  candidates: VisitorMatch[],
+  mode: ClickMode,
+  saleMs: number,
+  windowMs: number
+): VisitorMatch | null {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  const best: Record<Platform, { cand: VisitorMatch; ms: number } | null> = { meta: null, google: null };
+  for (const cand of candidates) {
+    for (const p of ["meta", "google"] as const) {
+      const pick = pickEligibleClick(cand.visitor.click_ids?.[p], mode, saleMs, windowMs);
+      if (!pick) continue;
+      const ms = pick.click.captured_at.toMillis();
+      const cur = best[p];
+      if (!cur || (mode === "first" ? ms < cur.ms : ms > cur.ms)) best[p] = { cand, ms };
+    }
+  }
+
+  const clicksFrom = (c: VisitorMatch) => (best.meta?.cand === c ? 1 : 0) + (best.google?.cand === c ? 1 : 0);
+  const seen = (c: VisitorMatch) => c.visitor.last_seen_at?.toMillis() ?? 0;
+  const primary = [...candidates].sort(
+    (a, b) =>
+      clicksFrom(b) - clicksFrom(a) ||
+      Number(b.matched_by === "phone") - Number(a.matched_by === "phone") ||
+      seen(b) - seen(a)
+  )[0];
+
+  const merged = new Set<string>();
+  const pairFor = (p: Platform) => {
+    const src = best[p]?.cand;
+    if (src && src !== primary) merged.add(src.key);
+    return (src ?? primary).visitor.click_ids?.[p];
+  };
+  const click_ids = { meta: pairFor("meta"), google: pairFor("google") };
+
+  return {
+    key: primary.key,
+    matched_by: primary.matched_by,
+    visitor: { ...primary.visitor, click_ids },
+    ...(merged.size ? { merged_keys: [...merged] } : {}),
+  };
+}
+
 /** Sale → conversion log row (no I/O). `match` is the visitor lookup result. */
 export function buildConversion(
   sale: SaleInput,
@@ -90,6 +146,7 @@ export function buildConversion(
   const info: MatchInfo = {
     matched_by: match?.matched_by ?? null,
     visitor_key: match?.key,
+    merged_visitor_keys: match?.merged_keys,
     click_mode: mode,
     meta_click: meta?.which,
     meta_click_at: meta?.click.captured_at,
@@ -168,12 +225,18 @@ export async function ingestSale(
   }
 
   const identity = hashIdentity({ phone: sale.phone, email: sale.email });
-  const match = await findVisitorByIdentifiers({
+  const candidates = await findVisitorCandidates({
     phone_meta: identity.phone_meta,
     email_hash: identity.email,
+    email_google_hash: identity.email_google,
   });
+  // Same mode + window for combining and for building, so the click chosen
+  // across docs is exactly the one buildConversion sends.
+  const mode = clickMode();
+  const windowMs = clickWindowMs();
+  const match = combineCandidates(candidates, mode, sale.event_time.getTime(), windowMs);
 
-  const row = buildConversion(sale, source, match, { syncRunId });
+  const row = buildConversion(sale, source, match, { syncRunId, mode, windowMs });
   if (existing?.meta_capi?.status === "success") row.meta_capi = existing.meta_capi;
   if (existing?.google_ads?.status === "success") row.google_ads = existing.google_ads;
 

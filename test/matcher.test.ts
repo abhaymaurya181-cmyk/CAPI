@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Timestamp } from "@google-cloud/firestore";
-import { buildConversion, pickEligibleClick, type SaleInput } from "../src/lib/matcher.js";
+import { buildConversion, combineCandidates, pickEligibleClick, type SaleInput } from "../src/lib/matcher.js";
 import { nextWindow } from "../src/lib/sync.js";
 import type { GoogleClick, MetaClick, Visitor, VisitorMatch } from "../src/lib/firestore.js";
 
@@ -114,4 +114,90 @@ test("nextWindow: initial lookback, then overlap before the cursor", () => {
   assert.equal(first.to.getTime(), now);
   const next = nextWindow({ last_window_to: at(now - 3600_000) }, now, 7);
   assert.equal(next.from.getTime(), now - 2 * 3600_000, "1h overlap before last cursor");
+});
+
+// ---------- one person, several visitor docs ----------
+
+function doc(
+  key: string,
+  matched_by: "phone" | "email",
+  clicks: Visitor["click_ids"],
+  lastSeenDaysAgo = 1
+): VisitorMatch {
+  return {
+    key,
+    matched_by,
+    visitor: {
+      first_seen_at: at(SALE - 60 * DAY),
+      last_seen_at: at(SALE - lastSeenDaysAgo * DAY),
+      fbp: `fbp-${key}`,
+      click_ids: clicks,
+    },
+  };
+}
+const gClick = (id: string, daysAgo: number): GoogleClick => ({ gclid: id, captured_at: at(SALE - daysAgo * DAY) });
+const mClick = (id: string, daysAgo: number): MetaClick => ({ fbclid: id, fbc: `fb.1.x.${id}`, captured_at: at(SALE - daysAgo * DAY) });
+
+test("combineCandidates: none → null, one → unchanged", () => {
+  assert.equal(combineCandidates([], "last", SALE, WINDOW), null);
+  const one = doc("p", "phone", {});
+  assert.equal(combineCandidates([one], "last", SALE, WINDOW), one);
+});
+
+test("combineCandidates: phone doc without clicks + email doc with Google click → the click is used", () => {
+  const phone = doc("phoneKey", "phone", {});
+  const email = doc("emailKey", "email", { google: { first: gClick("G-email", 5), last: gClick("G-email", 5) } });
+  const m = combineCandidates([phone, email], "last", SALE, WINDOW)!;
+  assert.equal(m.visitor.click_ids?.google?.last?.gclid, "G-email");
+  // The doc that supplies the click is the primary; nothing merged from elsewhere.
+  assert.equal(m.key, "emailKey");
+  assert.equal(m.merged_keys, undefined);
+});
+
+test("combineCandidates: Meta click on one doc, Google click on another → both kept, phone doc primary", () => {
+  const phone = doc("phoneKey", "phone", { meta: { first: mClick("F-p", 10), last: mClick("F-p", 10) } });
+  const email = doc("emailKey", "email", { google: { first: gClick("G-e", 3), last: gClick("G-e", 3) } });
+  const m = combineCandidates([email, phone], "last", SALE, WINDOW)!;
+  assert.equal(m.key, "phoneKey");
+  assert.equal(m.matched_by, "phone");
+  assert.equal(m.visitor.fbp, "fbp-phoneKey");
+  assert.equal(m.visitor.click_ids?.meta?.last?.fbclid, "F-p");
+  assert.equal(m.visitor.click_ids?.google?.last?.gclid, "G-e");
+  assert.deepEqual(m.merged_keys, ["emailKey"]);
+});
+
+test("combineCandidates: CLICK_MODE last → latest click across docs; first → earliest", () => {
+  const a = doc("a", "phone", { google: { first: gClick("G-old", 40), last: gClick("G-old", 40) } });
+  const b = doc("b", "email", { google: { first: gClick("G-new", 2), last: gClick("G-new", 2) } });
+  assert.equal(combineCandidates([a, b], "last", SALE, WINDOW)!.visitor.click_ids?.google?.last?.gclid, "G-new");
+  assert.equal(combineCandidates([a, b], "first", SALE, WINDOW)!.visitor.click_ids?.google?.first?.gclid, "G-old");
+});
+
+test("combineCandidates: clicks after the sale or outside the window never win", () => {
+  const after = doc("after", "phone", { google: { first: gClick("G-after", -2), last: gClick("G-after", -2) } });
+  const tooOld = doc("old", "email", { google: { first: gClick("G-old", 120), last: gClick("G-old", 120) } });
+  const ok = doc("ok", "email", { google: { first: gClick("G-ok", 20), last: gClick("G-ok", 20) } });
+  const m = combineCandidates([after, tooOld, ok], "last", SALE, WINDOW)!;
+  assert.equal(m.visitor.click_ids?.google?.last?.gclid, "G-ok");
+  // Only invalid clicks anywhere → no platform click chosen from them.
+  const none = combineCandidates([after, tooOld], "last", SALE, WINDOW)!;
+  assert.equal(buildConversion(sale, "ornaverse_offline", none, { mode: "last", windowMs: WINDOW }).gclid, undefined);
+});
+
+test("combineCandidates: no clicks anywhere → phone match over email, then most recently seen", () => {
+  const emailRecent = doc("emailRecent", "email", {}, 1);
+  const phoneOld = doc("phoneOld", "phone", {}, 30);
+  const phoneNew = doc("phoneNew", "phone", {}, 2);
+  assert.equal(combineCandidates([emailRecent, phoneOld, phoneNew], "last", SALE, WINDOW)!.key, "phoneNew");
+});
+
+test("buildConversion with a merged match: sends the merged click and records where it came from", () => {
+  const phone = doc("phoneKey", "phone", { meta: { first: mClick("F-p", 10), last: mClick("F-p", 10) } });
+  const email = doc("emailKey", "email", { google: { first: gClick("G-e", 3), last: gClick("G-e", 3) } });
+  const m = combineCandidates([phone, email], "last", SALE, WINDOW);
+  const row = buildConversion(sale, "ornaverse_offline", m, { mode: "last", windowMs: WINDOW });
+  assert.equal(row.gclid, "G-e");
+  assert.equal(row.fbc, "fb.1.x.F-p");
+  assert.equal(row.match?.visitor_key, "phoneKey");
+  assert.deepEqual(row.match?.merged_visitor_keys, ["emailKey"]);
 });
