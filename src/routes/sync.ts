@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { syncRunsCol, type SyncRun } from "../lib/firestore.js";
 import { requireBearer } from "../lib/auth.js";
-import { runOrnaverseSync } from "../lib/sync.js";
+import { runOrnaverseRescan, runOrnaverseSync } from "../lib/sync.js";
 
 function serializeRun(id: string, r: SyncRun) {
   return {
@@ -20,6 +20,17 @@ export default async function syncRoute(app: FastifyInstance): Promise<void> {
     if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
     const run = await runOrnaverseSync("schedule");
     req.log.info({ run: run.id, status: run.status, error: run.error }, "offline sync complete");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // Cloud Scheduler, daily (RESCAN_SCHEDULE): safety re-scan of recent days.
+  app.post("/internal/sync-offline-rescan", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaverseRescan();
+    req.log.info(
+      { run: run.id, status: run.status, error: run.error, new: run.processed, existing: run.skipped_duplicate },
+      "offline rescan complete"
+    );
     return reply.send(serializeRun(run.id, run));
   });
 

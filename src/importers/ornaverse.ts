@@ -213,6 +213,19 @@ export async function fetchOrnaverseSales(
   to: Date,
   fetchImpl: typeof fetch = fetch
 ): Promise<SaleInput[]> {
+  return (await fetchOrnaverseSalesDetailed(from, to, fetchImpl)).sales;
+}
+
+/**
+ * Same as fetchOrnaverseSales, plus `capped`: true when the MAX_PAGES safety
+ * limit stopped paging before reaching `from`, i.e. older bills in the window
+ * were not read this time. Callers surface it instead of silently missing them.
+ */
+export async function fetchOrnaverseSalesDetailed(
+  from: Date,
+  to: Date,
+  fetchImpl: typeof fetch = fetch
+): Promise<{ sales: SaleInput[]; capped: boolean }> {
   if (!ornaverseConfigured()) throw new Error("ornaverse_not_configured");
   const token = await getOrnaverseToken(fetchImpl);
   const allowedStatuses = postedStatuses();
@@ -233,7 +246,7 @@ export async function fetchOrnaverseSales(
     };
     const resp = await fetchInvoicePage(token, body, fetchImpl);
     const rows = resp.Entities ?? [];
-    if (rows.length === 0) break;
+    if (rows.length === 0) return { sales: out, capped: false };
 
     let oldestOnPageMs = Infinity;
     for (const row of rows) {
@@ -249,11 +262,12 @@ export async function fetchOrnaverseSales(
       if (sale) out.push(sale);
     }
     // Everything after this page is older than `from` — nothing more to see.
-    if (oldestOnPageMs <= fromMs) break;
+    if (oldestOnPageMs <= fromMs) return { sales: out, capped: false };
     // Short page = end of data.
-    if (rows.length < PAGE_SIZE) break;
+    if (rows.length < PAGE_SIZE) return { sales: out, capped: false };
   }
-  return out;
+  // Every page was full and still inside the window when the limit hit.
+  return { sales: out, capped: true };
 }
 
 /**

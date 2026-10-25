@@ -1,5 +1,6 @@
 import { Timestamp } from "@google-cloud/firestore";
 import {
+  conversionsCol,
   db,
   syncRunsCol,
   syncStateCol,
@@ -10,7 +11,11 @@ import {
 } from "./firestore.js";
 import { ingestSale, type SaleInput } from "./matcher.js";
 import { dispatchConversion, mapLimit } from "../senders/dispatcher.js";
-import { fetchOrnaverseSales, ornaverseConfigured } from "../importers/ornaverse.js";
+import {
+  fetchOrnaverseSales,
+  fetchOrnaverseSalesDetailed,
+  ornaverseConfigured,
+} from "../importers/ornaverse.js";
 
 const DISPATCH_CONCURRENCY = 10;
 const MAX_STORED_FAILURES = 50;
@@ -21,17 +26,49 @@ const OVERLAP_MS = 60 * 60 * 1000;
 const DEFAULT_INITIAL_LOOKBACK_DAYS = 7;
 // A crashed run's lock expires after this.
 const LOCK_MS = 15 * 60 * 1000;
+// Daily re-scan looks back this many days by default. Must stay below Meta's
+// 62-day limit for physical_store events, so it is capped at 60.
+const DEFAULT_RESCAN_DAYS = 30;
+const MAX_RESCAN_DAYS = 60;
+// Firestore getAll batch size when checking which sales we already have.
+const EXISTS_BATCH = 100;
 
 export type ImportSummary = Pick<
   SyncRun,
   "fetched" | "processed" | "matched" | "matched_with_click" | "skipped_duplicate" | "failed" | "failures"
 >;
 
+/** Sale ids that already have a conversions_log record. */
+async function existingSaleIds(ids: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  const unique = [...new Set(ids)];
+  for (let i = 0; i < unique.length; i += EXISTS_BATCH) {
+    const refs = unique.slice(i, i + EXISTS_BATCH).map((id) => conversionsCol.doc(id));
+    if (refs.length === 0) continue;
+    for (const snap of await db.getAll(...refs)) if (snap.exists) found.add(snap.id);
+  }
+  return found;
+}
+
+/**
+ * Keep only sales we have never recorded, and drop repeats of the same id
+ * within the batch. Pure, for tests.
+ */
+export function keepNewSales(sales: SaleInput[], existing: Set<string>): SaleInput[] {
+  const seen = new Set<string>();
+  return sales.filter((s) => {
+    if (existing.has(s.sale_id) || seen.has(s.sale_id)) return false;
+    seen.add(s.sale_id);
+    return true;
+  });
+}
+
 /** Ingest + dispatch a batch of sales and fill in the counts. */
 async function importSales(
   sales: SaleInput[],
   source: ConversionSource,
-  runId: string
+  runId: string,
+  opts: { onlyNew?: boolean } = {}
 ): Promise<ImportSummary> {
   const s: ImportSummary = {
     fetched: sales.length,
@@ -42,6 +79,14 @@ async function importSales(
     failed: 0,
     failures: [],
   };
+  // Re-scan: a sale we already recorded is left alone entirely. Its senders
+  // are owned by dispatch + the retry sweep (incl. "gave up" states); touching
+  // it here would re-send or reset retries every day.
+  if (opts.onlyNew) {
+    const fresh = keepNewSales(sales, await existingSaleIds(sales.map((x) => x.sale_id)));
+    s.skipped_duplicate = sales.length - fresh.length;
+    sales = fresh;
+  }
   const written: string[] = [];
   const fail = (sale_id: string, error: string) => {
     s.failed++;
@@ -172,6 +217,69 @@ export async function runOrnaverseSync(trigger: SyncTrigger): Promise<SyncRun & 
     );
     return { ...((await ref.get()).data() as SyncRun), id: ref.id };
   } finally {
+    await stateRef.set({ locked_until: null }, { merge: true });
+  }
+}
+
+/** ORNAVERSE_RESCAN_DAYS → whole days in [1, 60]; unset or invalid → 30. */
+export function rescanDays(raw = process.env.ORNAVERSE_RESCAN_DAYS): number {
+  const s = (raw ?? "").trim();
+  if (!/^\d+$/.test(s)) return DEFAULT_RESCAN_DAYS;
+  const n = Number(s);
+  if (n < 1) return DEFAULT_RESCAN_DAYS;
+  return Math.min(n, MAX_RESCAN_DAYS);
+}
+
+/**
+ * Daily safety re-scan. Re-reads posted bills dated in the last N days and
+ * imports only the ones we have never recorded: backdated bills, hours the
+ * hourly pull missed (outage, OrnaVerse error), drafts posted later.
+ *
+ * - Shares the hourly pull's lock, so the two never import the same new bill
+ *   at the same moment (that could send it twice). If the lock is held, the
+ *   run is recorded as skipped.
+ * - Never moves the hourly cursor.
+ * - If the page limit stops reading early, the run is "partial" with
+ *   error "page_limit_reached" so it shows in the admin sync log.
+ */
+export async function runOrnaverseRescan(): Promise<SyncRun & { id: string }> {
+  const source = "ornaverse_offline";
+  const trigger: SyncTrigger = "rescan";
+
+  const skipped = async (error: string) => {
+    const ref = await startRun(source, trigger);
+    await ref.update({ status: "skipped", error, finished_at: Timestamp.now() });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  };
+
+  if (!ornaverseConfigured()) return skipped("ornaverse_not_configured");
+  if (!(await acquireLock(source))) return skipped("another_sync_running");
+
+  const stateRef = syncStateCol.doc(source);
+  try {
+    const now = Date.now();
+    const window = { from: new Date(now - rescanDays() * 24 * 3600 * 1000), to: new Date(now) };
+    const ref = await startRun(source, trigger, window);
+
+    let fetched: { sales: SaleInput[]; capped: boolean };
+    try {
+      fetched = await fetchOrnaverseSalesDetailed(window.from, window.to);
+    } catch (err) {
+      await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
+      return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+    }
+
+    const summary = await importSales(fetched.sales, source, ref.id, { onlyNew: true });
+    const status = fetched.capped && finalStatus(summary) === "ok" ? "partial" : finalStatus(summary);
+    await ref.update({
+      status,
+      finished_at: Timestamp.now(),
+      ...summary,
+      ...(fetched.capped ? { error: "page_limit_reached" } : {}),
+    });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  } finally {
+    // Release only the lock; last_window_to (the hourly cursor) is untouched.
     await stateRef.set({ locked_until: null }, { merge: true });
   }
 }

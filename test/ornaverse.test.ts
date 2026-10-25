@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   _resetTokenCache,
   fetchOrnaverseSales,
+  fetchOrnaverseSalesDetailed,
   getOrnaverseToken,
   joinPhone,
   mapInvoiceRow,
@@ -430,4 +431,37 @@ test("retrieveOrnaverseSale: bad id, server errors and other API errors throw (c
   );
   delete process.env.ORNAVERSE_CLIENT_SECRET;
   await assert.rejects(retrieveOrnaverseSale(777, mockFetch([]).fetch), /ornaverse_not_configured/);
+});
+
+// ---------- page-limit signal (used by the daily re-scan) ----------
+
+test("fetchOrnaverseSalesDetailed: capped only when every page is full and still in the window", async () => {
+  const from = new Date("2026-10-01T00:00:00Z");
+  const to = new Date("2026-10-25T00:00:00Z");
+  const fullPage = (start: number) => ({
+    body: {
+      Entities: Array.from({ length: 100 }, (_, i) => ({
+        transaction_id: start + i,
+        document_status: 1,
+        document_date: "2026-10-20T10:00:00Z",
+        net_amount: 10,
+      })),
+    },
+  });
+  // 50 full in-window pages = the safety limit → capped.
+  _resetTokenCache();
+  const many = mockFetch([TOKEN, ...Array.from({ length: 50 }, (_, p) => fullPage(p * 100 + 1))]);
+  const capped = await fetchOrnaverseSalesDetailed(from, to, many.fetch);
+  assert.equal(capped.capped, true);
+  assert.equal(capped.sales.length, 5000);
+
+  // Empty page, short page, or reaching `from` → not capped.
+  for (const last of [{ body: { Entities: [] } }, { body: { Entities: fullPage(9001).body.Entities.slice(0, 3) } }]) {
+    _resetTokenCache();
+    const r = await fetchOrnaverseSalesDetailed(from, to, mockFetch([TOKEN, fullPage(1), last]).fetch);
+    assert.equal(r.capped, false);
+  }
+  _resetTokenCache();
+  const old = { body: { Entities: [{ transaction_id: 5, document_status: 1, document_date: "2026-09-01T10:00:00Z" }] } };
+  assert.equal((await fetchOrnaverseSalesDetailed(from, to, mockFetch([TOKEN, old]).fetch)).capped, false);
 });

@@ -190,7 +190,8 @@ export interface ConversionLog {
   updated_at: Timestamp;
 }
 
-export type SyncTrigger = "schedule" | "manual" | "csv";
+// "rescan" = daily safety re-scan of recent days (catches backdated / missed bills).
+export type SyncTrigger = "schedule" | "manual" | "csv" | "rescan";
 export type SyncStatus = "running" | "ok" | "partial" | "failed" | "skipped";
 
 /** One import of offline sales (scheduled OrnaVerse pull or CSV upload). */
