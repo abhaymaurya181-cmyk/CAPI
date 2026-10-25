@@ -10,3 +10,5 @@ dist
 coverage
 service-account*.json
 deploy
+ornaverse-api-docs
+api-dog*

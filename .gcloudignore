@@ -1,0 +1,15 @@
+# Files never uploaded to Cloud Build (gcloud builds submit).
+# Explicit on purpose: secrets and private vendor docs must not leave this machine,
+# even if .gitignore changes.
+.env
+.env.*
+!.env.example
+service-account*.json
+ornaverse-api-docs/
+api-dog*
+.git
+.gitignore
+node_modules/
+dist/
+coverage/
+*.log

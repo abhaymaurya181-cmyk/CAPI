@@ -25,21 +25,29 @@ gcloud artifacts repositories create lucira-capi \
 # Firestore (Native mode)
 gcloud firestore databases create --location="$REGION"
 
-# Secrets (paste values when prompted; use `echo -n <val> | gcloud secrets create ... --data-file=-` for scripted)
-for s in ADMIN_TOKEN INTERNAL_TOKEN \
-         META_PIXEL_ID META_CAPI_ACCESS_TOKEN \
-         GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_LOGIN_CUSTOMER_ID \
-         GOOGLE_ADS_CONVERSION_ACTION_OFFLINE; do
-  gcloud secrets create "$s" --replication-policy=automatic
-done
+# Secrets. Create each one WITH its value, only once you have the value
+# (a secret without a value breaks the deploy). The value is typed hidden and
+# never lands in shell history. Required: ADMIN_TOKEN, INTERNAL_TOKEN.
+# Optional, add when available (deploy attaches whichever exist):
+#   ORNAVERSE_API_BASE ORNAVERSE_CLIENT_ID ORNAVERSE_CLIENT_SECRET
+#   META_PIXEL_ID META_CAPI_ACCESS_TOKEN
+#   GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_CONVERSION_ACTION_OFFLINE
+#   GOOGLE_ADS_LOGIN_CUSTOMER_ID   (only if the Ads account sits under a manager)
+add_secret() {
+  read -rsp "Value for $1: " val; echo
+  printf '%s' "$val" | gcloud secrets create "$1" --replication-policy=automatic --data-file=- \
+    || printf '%s' "$val" | gcloud secrets versions add "$1" --data-file=-   # already exists → new version
+  unset val
+}
+add_secret ADMIN_TOKEN
+add_secret INTERNAL_TOKEN
+# ...repeat add_secret for each optional secret above when you have its value.
 
-# Grant Cloud Run service account access to secrets + Firestore.
+# Grant the Cloud Run service account access to every secret + Firestore.
 # Replace PROJECT_NUMBER (see `gcloud projects describe $PROJECT_ID`).
+# Re-run the loop after adding new secrets.
 SA="PROJECT_NUMBER-compute@developer.gserviceaccount.com"
-for s in ADMIN_TOKEN INTERNAL_TOKEN \
-         META_PIXEL_ID META_CAPI_ACCESS_TOKEN \
-         GOOGLE_ADS_CUSTOMER_ID GOOGLE_ADS_LOGIN_CUSTOMER_ID \
-         GOOGLE_ADS_CONVERSION_ACTION_OFFLINE; do
+for s in $(gcloud secrets list --format='value(name)'); do
   gcloud secrets add-iam-policy-binding "$s" \
     --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor
 done
@@ -63,9 +71,20 @@ firebase deploy --only firestore:indexes,firestore:rules
 ## Deploy the service
 
 ```sh
-cd deploy
-PROJECT_ID="$PROJECT_ID" bash cloud-run.sh
+# Check first: lists which secrets will be attached / are missing, and the
+# exact deploy command. Builds and changes nothing.
+PROJECT_ID="$PROJECT_ID" DRY_RUN=1 bash deploy/cloud-run.sh
+
+PROJECT_ID="$PROJECT_ID" bash deploy/cloud-run.sh
 ```
+
+Works from any folder. Only `ADMIN_TOKEN` and `INTERNAL_TOKEN` are required; each
+integration (OrnaVerse, Meta, Google) switches on once its secrets exist — redeploy
+after adding them. A half-configured integration is flagged before deploying.
+Non-secret settings use production defaults (`ORNAVERSE_POSTED_STATUSES=1`,
+`CLICK_MODE=last`, `GOOGLE_VALIDATE_ONLY=true`, …); override by setting them in the
+shell, e.g. `GOOGLE_VALIDATE_ONLY=false bash deploy/cloud-run.sh`.
+Never set `META_TEST_EVENT_CODE` in production unless you mean to send to Test Events.
 
 First deploy prints the service URL. Use it to:
 
