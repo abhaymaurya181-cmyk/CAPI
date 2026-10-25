@@ -23,6 +23,11 @@ export function isRetryable(res: SendResult): boolean {
   return true;
 }
 
+/** "meta_not_configured" / "google_not_configured": our setup, not the sale. */
+export function isNotConfigured(error?: string): boolean {
+  return Boolean(error && error.endsWith("_not_configured"));
+}
+
 export function backoffMs(attempts: number): number {
   return BACKOFF_MS[Math.min(attempts, BACKOFF_MS.length) - 1];
 }
@@ -38,6 +43,10 @@ export function toSenderResult(res: SendResult, attempts: number, nowMs = Date.n
   };
   if (res.ok) return { ...base, status: "success" };
   if (res.validated) return { ...base, status: "validated" };
+  // Credentials not set yet: nothing reached Meta/Google, so don't burn an
+  // attempt or keep retrying. The sale waits as failed/*_not_configured and
+  // requeueStuck (daily, or the admin button) puts it back once configured.
+  if (isNotConfigured(res.error)) return { ...base, retries: attempts - 1, status: "failed" };
   if (isRetryable(res) && attempts < MAX_ATTEMPTS) {
     return {
       ...base,
@@ -55,4 +64,46 @@ export function pendingSender(nowMs = Date.now()): SenderResult {
     retries: 0,
     next_retry_at: Timestamp.fromMillis(nowMs + FIRST_ATTEMPT_GRACE_MS),
   };
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+// Older than this, the platform rejects the event anyway (Meta physical_store:
+// 62 days; Google click conversions: 90-day click window), so requeueing is pointless.
+export const MAX_SEND_AGE_MS = { meta_capi: 62 * DAY_MS, google_ads: 90 * DAY_MS } as const;
+
+export type RequeueReason =
+  | "no_retry_time" // pending/retrying record from before the retry system
+  | "was_not_configured" // failed only because credentials were missing
+  | "validated_now_live" // passed Google's check-only mode; now live
+  | "retryable_failure"; // failed with a retryable error, attempts left
+
+/**
+ * Whether a stuck sender should go back in the queue, and why. Only when a
+ * send can actually work now: credentials present, Google live for validated
+ * ones, not too old for the platform. Never touches success, things already
+ * queued, or failures that would fail again (bad payload, no match keys…).
+ */
+export function requeueReason(
+  sender: "meta_capi" | "google_ads",
+  r: SenderResult | undefined,
+  ctx: { eventMs: number; nowMs: number; configured: boolean; googleLive: boolean }
+): RequeueReason | null {
+  if (r?.status === "success") return null;
+  if (!ctx.configured) return null;
+  if (ctx.nowMs - ctx.eventMs > MAX_SEND_AGE_MS[sender]) return null;
+  if (!r) return "no_retry_time";
+  switch (r.status) {
+    case "validated":
+      return sender === "google_ads" && ctx.googleLive ? "validated_now_live" : null;
+    case "pending":
+    case "retrying":
+      return r.next_retry_at ? null : "no_retry_time";
+    case "failed": {
+      if (isNotConfigured(r.error)) return "was_not_configured";
+      const res: SendResult = { ok: false, status: r.response_code ?? 0, body: "", error: r.error };
+      return isRetryable(res) && r.retries < MAX_ATTEMPTS ? "retryable_failure" : null;
+    }
+    default:
+      return null;
+  }
 }

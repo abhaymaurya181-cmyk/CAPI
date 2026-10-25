@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { syncRunsCol, type SyncRun } from "../lib/firestore.js";
 import { requireBearer } from "../lib/auth.js";
 import { runOrnaverseRescan, runOrnaverseSync } from "../lib/sync.js";
+import { requeueStuck } from "../lib/requeue.js";
 
 function serializeRun(id: string, r: SyncRun) {
   return {
@@ -31,7 +32,18 @@ export default async function syncRoute(app: FastifyInstance): Promise<void> {
       { run: run.id, status: run.status, error: run.error, new: run.processed, existing: run.skipped_duplicate },
       "offline rescan complete"
     );
-    return reply.send(serializeRun(run.id, run));
+    // Daily self-heal: sales stuck because credentials were missing or Google
+    // was in check-only mode go back in the queue once that's fixed — no one
+    // has to remember the admin button. A failure here doesn't fail the rescan.
+    let requeue: Awaited<ReturnType<typeof requeueStuck>> | { error: string };
+    try {
+      requeue = await requeueStuck();
+      req.log.info({ ...requeue, sample: undefined }, "daily requeue of stuck sales complete");
+    } catch (err) {
+      requeue = { error: (err as Error).message };
+      req.log.error({ err }, "daily requeue of stuck sales failed");
+    }
+    return reply.send({ ...serializeRun(run.id, run), requeue });
   });
 
   // "Sync now" for the offline feed from the admin UI.

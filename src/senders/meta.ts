@@ -77,6 +77,11 @@ function metaErrorMessage(body: string): string | undefined {
  * Send a Purchase event to Meta Conversions API.
  * Returns a structured result; errors do not throw.
  */
+/** Same check the sender uses before calling Meta. */
+export function metaConfigured(): boolean {
+  return Boolean(process.env.META_PIXEL_ID && process.env.META_CAPI_ACCESS_TOKEN);
+}
+
 export async function sendPurchaseToMeta(log: ConversionLog): Promise<SendResult> {
   const pixelId = process.env.META_PIXEL_ID;
   const token = process.env.META_CAPI_ACCESS_TOKEN;

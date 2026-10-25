@@ -133,6 +133,9 @@ export interface SenderResult {
   error?: string;
   // Set only while an automatic attempt is due; the retry sweep queries on it.
   next_retry_at?: Timestamp;
+  // Last time requeueStuck put this sender back in the queue, and why.
+  requeued_at?: Timestamp;
+  requeue_reason?: string;
 }
 
 /** How a sale was tied to a website visitor (see lib/matcher.ts). */

@@ -976,7 +976,7 @@
             </select>
             <button class="btn-ghost" id="conversions-refresh" type="button">Refresh</button>
             <button class="btn-ghost" id="conversions-resend" type="button"
-              title="Send every pending, retrying or failed conversion again now">Resend unsent</button>
+              title="Put stuck sales back in the queue and send them: missed retries, sales that failed only because Meta/Google weren't set up yet, and Google test-mode sales once Google is live. Already-sent and permanently failed sales are never re-sent.">Resend stuck</button>
             <span class="toolbar-msg" id="conversions-msg"></span>
           </div>
           <div class="table-wrap">
@@ -1760,7 +1760,9 @@
       runAction(e.currentTarget, $("#conversions-msg"), async () => {
         const r = await api("/admin/api/sync-now", { method: "POST", body: "{}" });
         loadConversions();
-        return `Sent again: ${r.dispatched}${r.errored ? `, ${r.errored} errored` : ""}`;
+        if (!r.requeued) return `Nothing stuck (checked ${r.scanned})`;
+        const reasons = Object.entries(r.by_reason || {}).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join(", ");
+        return `Requeued ${r.requeued} (${reasons}); sending ${r.sweep ? r.sweep.due : 0} now, rest within 5 min`;
       })
     );
 

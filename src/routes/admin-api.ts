@@ -14,6 +14,8 @@ import {
 import { clickMode } from "../lib/click-ids.js";
 import { requireBearer } from "../lib/auth.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
+import { requeueStuck } from "../lib/requeue.js";
+import { sweepRetries } from "./retry-sweep.js";
 import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
 import { buildConversion, type SaleInput } from "../lib/matcher.js";
 import { buildMetaPayload, metaPreflightError } from "../senders/meta.js";
@@ -159,32 +161,20 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   );
 
   /**
-   * Manual sync-now from the admin UI. Scans up to SWEEP_LIMIT pending/failed
-   * conversions and re-dispatches them. Mirrors /internal/retry-sweep but is
-   * gated by ADMIN_TOKEN so it can be triggered from the browser.
+   * "Resend stuck" in the admin UI. Requeues every stuck sale that can be sent
+   * now (see lib/requeue.ts — e.g. after adding Meta/Google credentials or
+   * switching Google live), then runs one retry sweep so the first batch goes
+   * out right away; the 5-minute sweep sends the rest. Sales that already
+   * succeeded or failed for a permanent reason are never re-sent.
+   * ?dry_run=1 only counts.
    */
-  app.post("/admin/api/sync-now", async (req, reply) => {
+  app.post<{ Querystring: { dry_run?: string } }>("/admin/api/sync-now", async (req, reply) => {
     if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
-    const SWEEP_LIMIT = 50;
-    const [metaQ, googleQ] = await Promise.all([
-      conversionsCol
-        .where("meta_capi.status", "in", BAD_STATUSES)
-        .limit(SWEEP_LIMIT)
-        .get(),
-      conversionsCol
-        .where("google_ads.status", "in", BAD_STATUSES)
-        .limit(SWEEP_LIMIT)
-        .get(),
-    ]);
-    const ids = new Set<string>();
-    for (const doc of [...metaQ.docs, ...googleQ.docs]) ids.add(doc.id);
-    const results = await Promise.allSettled(
-      [...ids].map((id) => dispatchConversion(id))
-    );
-    return reply.send({
-      dispatched: results.length,
-      errored: results.filter((r) => r.status === "rejected").length,
-    });
+    const dryRun = req.query.dry_run === "1";
+    const requeue = await requeueStuck({ dryRun });
+    const sweep = dryRun ? null : await sweepRetries();
+    req.log.info({ requeue: { ...requeue, sample: undefined }, sweep }, "admin resend stuck");
+    return reply.send({ ...requeue, sweep });
   });
 
   app.get<{
