@@ -2,7 +2,7 @@ import { GoogleAuth } from "google-auth-library";
 import type { ConsentState, ConversionLog } from "../lib/firestore.js";
 import type { SendResult } from "./types.js";
 
-const INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest";
+export const INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest";
 const SCOPE = "https://www.googleapis.com/auth/datamanager";
 // Data Manager allows at most 10 user identifiers per event.
 const MAX_IDENTIFIERS = 10;

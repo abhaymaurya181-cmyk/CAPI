@@ -17,7 +17,12 @@ import { dispatchConversion } from "../senders/dispatcher.js";
 import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
 import { buildConversion, type SaleInput } from "../lib/matcher.js";
 import { buildMetaPayload, metaPreflightError } from "../senders/meta.js";
-import { buildGooglePayload, googleConfig, googlePreflightError } from "../senders/google.js";
+import {
+  INGEST_URL as GOOGLE_INGEST_URL,
+  buildGooglePayload,
+  googleConfig,
+  googlePreflightError,
+} from "../senders/google.js";
 
 const BAD_STATUSES: SendStatus[] = ["pending", "failed", "retrying"];
 
@@ -390,7 +395,8 @@ function previewPayloads(log: ConversionLog, opts: { simulated: boolean }) {
   const googleErr = googlePreflightError(log);
   const googleSection = gcfg
     ? {
-        endpoint: `https://datamanager.googleapis.com/v1/audiencePartners/${gcfg.customerId}:ingestEvents`,
+        // Same constant the sender posts to, so the preview can't drift from reality.
+        endpoint: GOOGLE_INGEST_URL,
         config_present: true,
         preflight_error: googleErr,
         would_be_sent: !googleErr,

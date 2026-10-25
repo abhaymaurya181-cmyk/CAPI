@@ -176,12 +176,23 @@ export function mapInvoiceRow(row: InvoiceRow): SaleInput | null {
   };
 }
 
-/** POSTED document_status codes to keep. Env override lets us tune without a redeploy. */
-function postedStatuses(): Set<number> | null {
-  const raw = process.env.ORNAVERSE_POSTED_STATUSES;
-  if (!raw) return null;
-  const nums = raw.split(",").map((s) => Number(s.trim())).filter(Number.isFinite);
-  return nums.length ? new Set(nums) : null;
+/** Lucira's live tenant: 1 = posted. 2 (returns/cancels) must never be sent as a sale. */
+const DEFAULT_POSTED_STATUSES = [1];
+
+/**
+ * document_status codes to keep. Env override lets us tune without a redeploy.
+ * Unset, empty or unparseable → posted only (1), never "everything": importing
+ * returns/cancels as purchases would report fake sales to Meta/Google.
+ * Only non-negative integers count, so "1," or "1, x" can't sneak in a 0/NaN.
+ */
+export function postedStatuses(): Set<number> {
+  const raw = process.env.ORNAVERSE_POSTED_STATUSES ?? "";
+  const nums = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s))
+    .map(Number);
+  return new Set(nums.length ? nums : DEFAULT_POSTED_STATUSES);
 }
 
 const PAGE_SIZE = 100;
@@ -204,23 +215,17 @@ export async function fetchOrnaverseSales(
   const toMs = to.getTime();
   const out: SaleInput[] = [];
 
-  // Server-side status filter when configured. EqualityFilter accepts a
-  // scalar (=) or an array (IN) per docs; we send scalar when only one
-  // code is allowed, array when multiple.
-  const statusFilter = (() => {
-    if (!allowedStatuses || allowedStatuses.size === 0) return undefined;
-    const arr = [...allowedStatuses];
-    return arr.length === 1 ? arr[0] : arr;
-  })();
+  // Server-side status filter. EqualityFilter accepts a scalar (=) or an
+  // array (IN) per docs; we send scalar when only one code is allowed.
+  const statusList = [...allowedStatuses];
+  const statusFilter = statusList.length === 1 ? statusList[0] : statusList;
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const body: Record<string, unknown> = {
       Skip: page * PAGE_SIZE,
       Take: PAGE_SIZE,
+      EqualityFilter: { document_status: statusFilter },
     };
-    if (statusFilter !== undefined) {
-      body.EqualityFilter = { document_status: statusFilter };
-    }
     const resp = await fetchInvoicePage(token, body, fetchImpl);
     const rows = resp.Entities ?? [];
     if (rows.length === 0) break;
@@ -228,7 +233,8 @@ export async function fetchOrnaverseSales(
     let oldestOnPageMs = Infinity;
     for (const row of rows) {
       // Belt-and-suspenders in case the server ignored the EqualityFilter.
-      if (allowedStatuses && row.document_status != null && !allowedStatuses.has(row.document_status)) {
+      // A row without a status is dropped too: we can't prove it's a sale.
+      if (row.document_status == null || !allowedStatuses.has(row.document_status)) {
         continue;
       }
       const docMs = parseOrnaverseDate(row.document_date);

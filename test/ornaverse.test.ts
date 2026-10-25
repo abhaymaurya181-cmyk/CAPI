@@ -7,6 +7,7 @@ import {
   joinPhone,
   mapInvoiceRow,
   parseOrnaverseDate,
+  postedStatuses,
   splitPartyName,
   type InvoiceRow,
 } from "../src/importers/ornaverse.js";
@@ -169,9 +170,9 @@ test("fetchOrnaverseSales: single page, filters out rows outside window", async 
     {
       body: {
         Entities: [
-          { transaction_id: 1, document_date: "2026-10-24T10:00:00Z", modification_date: "2026-10-24T10:00:00Z", net_amount: 100, mobile: "9988001001", phone_code: "91" }, // in window
-          { transaction_id: 2, document_date: "2026-10-23T10:00:00Z", modification_date: "2026-10-23T10:00:00Z", net_amount: 200 }, // before from
-          { transaction_id: 3, document_date: "2026-10-24T15:00:00Z", modification_date: "2026-10-24T15:00:00Z", net_amount: 300 }, // after to
+          { transaction_id: 1, document_status: 1, document_date: "2026-10-24T10:00:00Z", modification_date: "2026-10-24T10:00:00Z", net_amount: 100, mobile: "9988001001", phone_code: "91" }, // in window
+          { transaction_id: 2, document_status: 1, document_date: "2026-10-23T10:00:00Z", modification_date: "2026-10-23T10:00:00Z", net_amount: 200 }, // before from
+          { transaction_id: 3, document_status: 1, document_date: "2026-10-24T15:00:00Z", modification_date: "2026-10-24T15:00:00Z", net_amount: 300 }, // after to
         ],
         TotalCount: 3,
       },
@@ -193,8 +194,8 @@ test("fetchOrnaverseSales: stops paging when a page's oldest row predates from",
     {
       body: {
         Entities: [
-          { transaction_id: 101, document_date: "2026-10-24T11:00:00Z", modification_date: "2026-10-24T11:00:00Z", net_amount: 500 },
-          { transaction_id: 102, document_date: "2026-10-23T22:00:00Z", modification_date: "2026-10-23T22:00:00Z", net_amount: 500 },
+          { transaction_id: 101, document_status: 1, document_date: "2026-10-24T11:00:00Z", modification_date: "2026-10-24T11:00:00Z", net_amount: 500 },
+          { transaction_id: 102, document_status: 1, document_date: "2026-10-23T22:00:00Z", modification_date: "2026-10-23T22:00:00Z", net_amount: 500 },
         ],
         TotalCount: 999, // pretend lots more exist
       },
@@ -214,6 +215,7 @@ test("fetchOrnaverseSales: paginates when every page is in-window and full", asy
   const page = (startId: number, modStartMs: number) => ({
     Entities: Array.from({ length: 100 }, (_, i) => ({
       transaction_id: startId + i,
+      document_status: 1,
       document_date: "2026-10-24T10:00:00Z",
       modification_date: new Date(modStartMs - i * 1000).toISOString(),
       net_amount: 10,
@@ -301,12 +303,42 @@ test("fetchOrnaverseSales: ORNAVERSE_POSTED_STATUSES=1,2 sends EqualityFilter as
   assert.deepEqual(body.EqualityFilter, { document_status: [1, 2] });
 });
 
-test("fetchOrnaverseSales: no POSTED_STATUSES → no EqualityFilter in body", async () => {
+test("fetchOrnaverseSales: no POSTED_STATUSES → defaults to posted only (1), never everything", async () => {
   const { fetch: f, calls } = mockFetch([
     { body: { access_token: "tok", expires_in: 3600 } },
     { body: { Entities: [], TotalCount: 0 } },
   ]);
   await fetchOrnaverseSales(new Date("2026-10-24T00:00:00Z"), new Date("2026-10-25T00:00:00Z"), f);
   const body = JSON.parse(String(calls[1].init!.body));
-  assert.equal(body.EqualityFilter, undefined);
+  assert.deepEqual(body.EqualityFilter, { document_status: 1 });
+});
+
+test("postedStatuses: unset / empty / junk → [1]; stray commas and junk never add 0 or NaN", () => {
+  for (const raw of [undefined, "", "  ", "abc", ",", "1.5", "-1"]) {
+    if (raw === undefined) delete process.env.ORNAVERSE_POSTED_STATUSES;
+    else process.env.ORNAVERSE_POSTED_STATUSES = raw;
+    assert.deepEqual([...postedStatuses()], [1], String(raw));
+  }
+  process.env.ORNAVERSE_POSTED_STATUSES = "1,";
+  assert.deepEqual([...postedStatuses()], [1]);
+  process.env.ORNAVERSE_POSTED_STATUSES = " 1 , x, 2 ";
+  assert.deepEqual([...postedStatuses()], [1, 2]);
+});
+
+test("fetchOrnaverseSales: returns (status 2) and rows without a status are never imported by default", async () => {
+  const { fetch: f } = mockFetch([
+    { body: { access_token: "tok", expires_in: 3600 } },
+    {
+      body: {
+        Entities: [
+          { transaction_id: 20, document_status: 1, document_date: "2026-10-24T10:00:00Z", net_amount: 100 }, // keep
+          { transaction_id: 21, document_status: 2, document_date: "2026-10-24T10:30:00Z", net_amount: 100 }, // return → drop
+          { transaction_id: 22, document_date: "2026-10-24T11:00:00Z", net_amount: 100 }, // no status → drop
+        ],
+        TotalCount: 3,
+      },
+    },
+  ]);
+  const sales = await fetchOrnaverseSales(new Date("2026-10-24T00:00:00Z"), new Date("2026-10-25T00:00:00Z"), f);
+  assert.deepEqual(sales.map((s) => s.sale_id), ["20"]);
 });
