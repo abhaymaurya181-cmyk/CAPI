@@ -18,6 +18,9 @@ import type { SaleInput } from "../lib/matcher.js";
  * surface every row inside the window.
  */
 
+/** Every OrnaVerse call gives up after this, so a hung server can't stall a sync or webhook. */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 /** Token cache, module-scoped — one process = one refresh cadence. */
 let cachedToken: { value: string; expires_at_ms: number } | null = null;
 
@@ -57,6 +60,7 @@ export async function getOrnaverseToken(fetchImpl: typeof fetch = fetch): Promis
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`ornaverse_token_failed:${res.status}`);
@@ -112,6 +116,7 @@ export async function fetchInvoicePage(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`ornaverse_list_failed:${res.status}`);
@@ -249,4 +254,81 @@ export async function fetchOrnaverseSales(
     if (rows.length < PAGE_SIZE) break;
   }
   return out;
+}
+
+/**
+ * A bill id from an untrusted source (webhook body, admin input) → a positive
+ * safe integer, or null. Rejects 0, negatives, decimals, exponents and junk so
+ * nothing odd is ever sent to OrnaVerse.
+ */
+export function parseTransactionId(raw: unknown): number | null {
+  const s = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
+  if (!/^[1-9]\d{0,15}$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+export type RetrieveOutcome =
+  | { kind: "sale"; sale: SaleInput }
+  | {
+      kind: "skipped";
+      reason: "not_found" | "status_not_posted" | "unmappable" | "id_mismatch";
+      document_status?: number;
+    };
+
+function postRetrieve(token: string, id: number, fetchImpl: typeof fetch): Promise<Response> {
+  const base = process.env.ORNAVERSE_API_BASE!.replace(/\/+$/, "");
+  // Serenity RetrieveRequest: { EntityId }. Read-only.
+  return fetchImpl(`${base}/Services/POS/Invoice/Retrieve`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ EntityId: id }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+}
+
+/**
+ * Fetch one bill by transaction_id (POS/Invoice/Retrieve) and turn it into a
+ * sale, applying the same rules as the hourly pull: posted status only, must
+ * map cleanly. Used by the webhook "doorbell": OrnaVerse says "bill X changed",
+ * we read the current bill ourselves instead of trusting the webhook body.
+ *
+ * Throws on transport/auth/server errors so the caller can report a failure
+ * (OrnaVerse then retries, and the hourly pull is the backstop). Returns
+ * `skipped` for bills that exist but must not be sent.
+ */
+export async function retrieveOrnaverseSale(
+  rawId: unknown,
+  fetchImpl: typeof fetch = fetch
+): Promise<RetrieveOutcome> {
+  if (!ornaverseConfigured()) throw new Error("ornaverse_not_configured");
+  const id = parseTransactionId(rawId);
+  if (id == null) throw new Error("ornaverse_bad_transaction_id");
+
+  let res = await postRetrieve(await getOrnaverseToken(fetchImpl), id, fetchImpl);
+  // Token revoked or expired early on their side: get a fresh one, try once more.
+  if (res.status === 401) {
+    _resetTokenCache();
+    res = await postRetrieve(await getOrnaverseToken(fetchImpl), id, fetchImpl);
+  }
+  if (res.status === 404) return { kind: "skipped", reason: "not_found" };
+  if (!res.ok) throw new Error(`ornaverse_retrieve_failed:${res.status}`);
+
+  const json = (await res.json()) as { Entity?: InvoiceRow; Error?: { Code?: string; Message?: string } };
+  if (json.Error?.Code) {
+    if (/not.?found/i.test(`${json.Error.Code} ${json.Error.Message ?? ""}`)) {
+      return { kind: "skipped", reason: "not_found" };
+    }
+    throw new Error(`ornaverse_retrieve_error:${json.Error.Code}`);
+  }
+  const row = json.Entity;
+  if (!row) return { kind: "skipped", reason: "not_found" };
+  // Never attach one customer's bill to another sale id.
+  if (Number(row.transaction_id) !== id) return { kind: "skipped", reason: "id_mismatch" };
+  if (row.document_status == null || !postedStatuses().has(row.document_status)) {
+    return { kind: "skipped", reason: "status_not_posted", document_status: row.document_status };
+  }
+  const sale = mapInvoiceRow(row);
+  if (!sale) return { kind: "skipped", reason: "unmappable" };
+  return { kind: "sale", sale };
 }

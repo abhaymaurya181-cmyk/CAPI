@@ -7,7 +7,9 @@ import {
   joinPhone,
   mapInvoiceRow,
   parseOrnaverseDate,
+  parseTransactionId,
   postedStatuses,
+  retrieveOrnaverseSale,
   splitPartyName,
   type InvoiceRow,
 } from "../src/importers/ornaverse.js";
@@ -341,4 +343,91 @@ test("fetchOrnaverseSales: returns (status 2) and rows without a status are neve
   ]);
   const sales = await fetchOrnaverseSales(new Date("2026-10-24T00:00:00Z"), new Date("2026-10-25T00:00:00Z"), f);
   assert.deepEqual(sales.map((s) => s.sale_id), ["20"]);
+});
+
+// ---------- single bill (Retrieve) ----------
+
+const TOKEN = { body: { access_token: "tok", expires_in: 3600 } };
+
+/** Fresh login per call: the token cache would otherwise eat the queued TOKEN response. */
+function billFetch(resp: { status?: number; body: unknown }) {
+  _resetTokenCache();
+  return mockFetch([TOKEN, resp]).fetch;
+}
+const POSTED_BILL = {
+  transaction_id: 777,
+  document_status: 1,
+  document_date: "2026-10-24T10:00:00",
+  net_amount: 52000,
+  phone_code: "91",
+  mobile: "9876543210",
+  party_name: "Test Customer",
+};
+
+test("parseTransactionId: accepts positive integers, rejects everything else", () => {
+  assert.equal(parseTransactionId(777), 777);
+  assert.equal(parseTransactionId(" 777 "), 777);
+  for (const bad of [0, -1, 1.5, "1e3", "0777", "abc", "", null, undefined, {}, [], "99999999999999999"]) {
+    assert.equal(parseTransactionId(bad), null, JSON.stringify(bad));
+  }
+});
+
+test("retrieveOrnaverseSale: posted bill → sale; sends { EntityId } read-only", async () => {
+  const { fetch: f, calls } = mockFetch([TOKEN, { body: { Entity: POSTED_BILL } }]);
+  const out = await retrieveOrnaverseSale("777", f);
+  assert.equal(out.kind, "sale");
+  assert.equal(out.kind === "sale" && out.sale.sale_id, "777");
+  assert.match(calls[1].url, /\/Services\/POS\/Invoice\/Retrieve$/);
+  assert.deepEqual(JSON.parse(String(calls[1].init!.body)), { EntityId: 777 });
+  assert.ok(calls[1].init!.signal, "request must have a timeout");
+});
+
+test("retrieveOrnaverseSale: return / unposted / no-status bills are skipped, not sent", async () => {
+  for (const status of [2, 0, undefined]) {
+    const f = billFetch({ body: { Entity: { ...POSTED_BILL, document_status: status } } });
+    const out = await retrieveOrnaverseSale(777, f);
+    assert.deepEqual(out, { kind: "skipped", reason: "status_not_posted", document_status: status });
+  }
+});
+
+test("retrieveOrnaverseSale: not found (404, empty Entity, NotFound error) → skipped", async () => {
+  for (const resp of [
+    { status: 404, body: {} },
+    { body: {} },
+    { body: { Error: { Code: "RecordNotFound", Message: "Record not found" } } },
+  ]) {
+    assert.deepEqual(await retrieveOrnaverseSale(777, billFetch(resp)), { kind: "skipped", reason: "not_found" });
+  }
+});
+
+test("retrieveOrnaverseSale: a different bill coming back is never used", async () => {
+  const { fetch: f } = mockFetch([TOKEN, { body: { Entity: { ...POSTED_BILL, transaction_id: 778 } } }]);
+  assert.deepEqual(await retrieveOrnaverseSale(777, f), { kind: "skipped", reason: "id_mismatch" });
+});
+
+test("retrieveOrnaverseSale: 401 → fresh token and one retry", async () => {
+  const { fetch: f, calls } = mockFetch([
+    TOKEN,
+    { status: 401, body: {} },
+    { body: { access_token: "tok2", expires_in: 3600 } },
+    { body: { Entity: POSTED_BILL } },
+  ]);
+  const out = await retrieveOrnaverseSale(777, f);
+  assert.equal(out.kind, "sale");
+  assert.equal(calls.length, 4);
+  assert.equal((calls[3].init!.headers as Record<string, string>).Authorization, "Bearer tok2");
+});
+
+test("retrieveOrnaverseSale: bad id, server errors and other API errors throw (caller retries)", async () => {
+  await assert.rejects(retrieveOrnaverseSale("abc", mockFetch([]).fetch), /ornaverse_bad_transaction_id/);
+  await assert.rejects(
+    retrieveOrnaverseSale(777, billFetch({ status: 500, body: {} })),
+    /ornaverse_retrieve_failed:500/
+  );
+  await assert.rejects(
+    retrieveOrnaverseSale(777, billFetch({ body: { Error: { Code: "AccessDenied" } } })),
+    /ornaverse_retrieve_error:AccessDenied/
+  );
+  delete process.env.ORNAVERSE_CLIENT_SECRET;
+  await assert.rejects(retrieveOrnaverseSale(777, mockFetch([]).fetch), /ornaverse_not_configured/);
 });
