@@ -14,7 +14,7 @@
 //   node deploy/deploy.mjs service       --project <gcp-project> [--dry-run]
 //   node deploy/deploy.mjs scheduler     --project <gcp-project> [--dry-run]
 //   node deploy/deploy.mjs all           --project <gcp-project> [--dry-run]   # service + scheduler
-// Options: --region (default asia-south1), --service (default lucira-capi),
+// Options: --region (default us-central1), --service (default lucira-capi),
 //          --service-account <email>: for `grant`, the SA that gets the IAM
 //          bindings; for `service` / `all`, the SA Cloud Run will run as.
 //          Default on both is the project's Compute default SA.
@@ -384,7 +384,10 @@ export function parseArgs(argv) {
   const opts = {
     command,
     project: process.env.PROJECT_ID,
-    region: "asia-south1",
+    // us-central1 because asia-south1 blocks the beta run domain-mappings API
+    // we need for track.lucirajewelry.com. Changing this strands the Cloud
+    // Run service away from the live domain mapping — see 2026-10-27 fix.
+    region: "us-central1",
     service: "lucira-capi",
     dryRun: process.env.DRY_RUN === "1",
   };
