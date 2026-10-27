@@ -1,4 +1,4 @@
-# Handoff — Lucira offline CAPI (as of 2026-10-25)
+# Handoff — Lucira offline CAPI (as of 2026-10-27)
 
 Read this first when continuing on a new machine / new Claude session.
 
@@ -44,9 +44,9 @@ The repo is **offline-only** (the Shopify online-order webhook was removed). Fir
 | 2 Phone/email/name normalization + unit tests | ✅ done |
 | 3 Meta sender (`physical_store`, 62-day limit, test-event script) | ✅ done — not tested live (no Meta creds) |
 | 4 Google sender on Data Manager API (`validateOnly`) | ✅ done — not tested live (no Google creds) |
-| 5a OrnaVerse hourly pull | ✅ works against live tenant; posted-only default; 15s timeouts |
+| 5a OrnaVerse hourly pull | ✅ works against live tenant; posted-only default; 15s timeouts; 3-day look-back (new bills only); ₹0 bills skipped |
 | 5a+ Daily safety re-scan (last 30 days, new bills only) | ✅ done 2026-10-25 |
-| 5b OrnaVerse webhook | 🟡 `retrieveOrnaverseSale(id)` built ("doorbell" design); route still a stub (no PII logged) |
+| 5b OrnaVerse webhook | ⏸ parked — not needed for go-live; `retrieveOrnaverseSale(id)` built + verified live; route is a stub (no PII logged) |
 | 6 Matcher, sync log, hourly sync, retry back-off | ✅ done; now combines a person's visitor docs + gmail variants |
 | 6+ Stuck-sale recovery (`requeueStuck`, daily + admin "Resend stuck") | ✅ done 2026-10-25 |
 | 7 Admin: sync log, match details, resend, payload preview, IP geo | ✅ done |
@@ -55,7 +55,7 @@ The repo is **offline-only** (the Shopify online-order webhook was removed). Fir
 | Live Meta / Google tests | ❌ waiting for credentials (see Env) |
 | Deploy (Cloud Run, scheduler, indexes, domain, GTM) | ❌ waiting for a Google Cloud project |
 
-`npm test` → 97 passing. `npm run typecheck` clean.
+`npm test` → 101 passing. `npm run typecheck` clean.
 
 ## What was built on 2026-10-25 (this laptop)
 
@@ -94,6 +94,20 @@ The repo is **offline-only** (the Shopify online-order webhook was removed). Fir
   `shipping_city/state/pin_code`; store = `mailing_name` || `company_name`; currency INR.
 - InvoiceRow also has `creation_date`, `modification_date`, `allow_backdated_entry`,
   `number_of_backdated_days` (backdated bills are possible).
+- **Read-only check 2026-10-27** (30 latest bills, ids 2156–2185, TotalCount 2037; 5 bills via Retrieve):
+  - Dates are full **UTC timestamps with `Z`** (e.g. `2026-10-27T09:09:32.425Z`) — real time of day, parsed as-is.
+  - `creation_date` ≈ `document_date` (seconds apart); newer id ⇒ newer creation; none backdated in the 30.
+  - `modification_date` is empty in List.
+  - `Retrieve` with `{ EntityId }` **works** (verified). List does not return `line_items`; Retrieve does.
+  - Phone: `phone_code` + 10-digit `mobile`, never already starting with 91 → `joinPhone` is fine. One bill had
+    `phone_code=1` (maybe a staff mistake — would not match an Indian number); one had no code (→ +91 default).
+  - Amounts: `net_amount` = full bill. Return credit / advances appear as payment modes in `receipt_details`
+    (e.g. UPI + "Return", "Order Advance"), not as deductions. No `is_exchange` items seen yet.
+  - 2 of 30 bills had `net_amount = 0` (100% discount) → now skipped (not purchases).
+  - One bill was posted but unpaid (`receipt_amount 0`, `balance_amount` = net) — still sent as a sale.
+- **Lucira answers (2026-10-27):** backdated bills — rarely, max 2–3 days; draft posted later — yes, can
+  happen; return — a **new** return bill is created (original unchanged → no correction needed);
+  exchange — send the **full bill** (= `net_amount`).
 - **Webhooks (from exported docs):** `WebhookSubscriptions` rows have `entity_type`, `operation` (int 1–5,
   "lifecycle operation" — meanings undocumented), `url`, **`secret_key`**, `active`, `failure_count`, and a
   deliveries log with `attempt_count` (OrnaVerse retries; schedule unknown). `SamplePayload` returns the
@@ -112,17 +126,22 @@ Scripts (read-only, load `.env` via dotenv; **ask the user before running any �
 
 ## Open issues / decisions
 
-1. **Backdated bills:** the daily re-scan now catches them (≤30 days). The faster hourly fix (ID bookmark
-   on `transaction_id`) waits for the read-only check: do newer ids always have newer `creation_date`?
-2. **`document_date` time-of-day** and **status 2 meaning** — answered by the read-only check + Lucira.
-3. **Phone:** if `mobile` ever already includes `91`, `joinPhone` would double the country code — check on
-   real data (read-only check), then fix.
-4. **Webhook (5b):** build once OrnaVerse answers — design: verify `secret_key` → take the bill id →
-   `retrieveOrnaverseSale` → `ingestSale` → dispatch; return 2xx fast; log no PII; hourly pull + daily
-   re-scan stay as backup.
-5. **Business decisions (user):** returns/cancels after we sent → skip or correct? Exchange bills (old gold)
-   → net amount or full bill value?
-6. Google `eventSource`: we send `IN_STORE`; one-line change if Google rejects it.
+1. ✅ **Backdated / late-posted bills (2026-10-27):** every hourly pull now also re-reads bills dated in
+   the last `ORNAVERSE_HOURLY_LOOKBACK_DAYS` (default 3) and imports **only bills never recorded**
+   (`importSales(..., { onlyNew: true })` — re-ingesting would reset retries and re-send). Daily re-scan
+   (30 days) stays as the safety net. Side effect: a bill edited after we first imported it is not
+   re-imported (edits of posted bills are not expected).
+2. ✅ Time-of-day, status 2, phone format, exchange amount — settled (see read-only check + Lucira answers).
+   ₹0 bills skipped in `mapInvoiceRow`.
+3. **Webhook (5b): parked.** Not needed to go live (hourly pull + 3-day look-back + daily re-scan cover
+   everything; ads platforms accept days-old store sales). OrnaVerse's webhook questions were never sent.
+   If wanted later: their team must create the subscription (read-only rule). Design: verify `secret_key`
+   → bill id → `retrieveOrnaverseSale` → `ingestSale` → dispatch. Cheaper alternative: run the hourly
+   sync every 15 min (`SYNC_SCHEDULE`). The 7 webhook doc pages exist only on the other laptop.
+4. **Meta parked by the user (2026-10-27) — Google first.** Unconfigured Meta does not burn retries;
+   `requeueStuck` sends them once Meta creds are added.
+5. Google `eventSource`: we send `IN_STORE`; one-line change if Google rejects it.
+6. Exchange bills with `is_exchange` items not seen yet — check one when it appears.
 
 ### Questions sent / to send
 
@@ -141,6 +160,7 @@ ORNAVERSE_CLIENT_SECRET=<from Lucira>
 ORNAVERSE_SCOPE=openid
 ORNAVERSE_POSTED_STATUSES=1
 ORNAVERSE_RESCAN_DAYS=30
+ORNAVERSE_HOURLY_LOOKBACK_DAYS=3
 ```
 Meta (❌ waiting): `META_PIXEL_ID`, `META_CAPI_ACCESS_TOKEN`, `META_TEST_EVENT_CODE`
 → `npm run meta:test -- [phone] [email]`.
@@ -168,10 +188,14 @@ run yet — have a teammate run `--dry-run` once. Blocked on: which Google Cloud
 
 ## Next actions (in order)
 
-1. User: "yes, run it" → `npx tsx scripts/orna-readonly-check.ts` (read-only, no PII printed).
-2. From its results + Lucira's answers: hourly ID bookmark (if ids follow entry order), phone fix if needed.
-3. OrnaVerse answers → build the webhook (5b).
-4. Meta + Google creds → Meta test event, Google validateOnly → one OrnaVerse bill end to end.
+1. ✅ Read-only check run 2026-10-27; ✅ 3-day hourly look-back + ₹0 skip built (101 tests).
+2. ✅ **Google validateOnly passed (2026-10-27):** HTTP 200, `validated: true` with a fake customer —
+   service account `lucira-capi-sender@lucirajewelry-prod.iam.gserviceaccount.com` has Google Ads access,
+   conversion action id correct, `IN_STORE` accepted, no login (manager) customer id needed. GCP project
+   = `lucirajewelry-prod` (to be confirmed by the user for deploy). Key file must live **outside** the repo
+   (`.gitignore`/`.gcloudignore` now also block `*-key*.json` and `*.zip`); Cloud Run needs no key file.
+   Next: deploy dry-run → deploy → one OrnaVerse bill end to end.
+3. Meta later (creds → `npm run meta:test`). Webhook parked (see Open issues 3).
 5. Google Cloud project decided → deploy (`node deploy/deploy.mjs …`), Firestore indexes, service account
    in Google Ads, `track.lucirajewelry.com`, tracker on site via GTM.
 6. Set `GOOGLE_VALIDATE_ONLY=false` → redeploy; stuck "validated" sales are requeued automatically (daily)

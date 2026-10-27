@@ -163,10 +163,15 @@ export function mapInvoiceRow(row: InvoiceRow): SaleInput | null {
   if (!row.transaction_id) return null;
   const eventMs = parseOrnaverseDate(row.document_date);
   if (eventMs == null) return null;
+  // net_amount is the full bill: return credit / old gold shows up as a
+  // payment mode in receipt_details, not as a deduction. ₹0 bills (100%
+  // discount, free coins) are not purchases worth reporting.
+  const amount = Number(row.net_amount ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
   const { first, last } = splitPartyName(row.party_name);
   return {
     sale_id: String(row.transaction_id),
-    amount: Number(row.net_amount ?? 0),
+    amount,
     currency: "INR",
     event_time: new Date(eventMs),
     phone: joinPhone(row.phone_code, row.mobile),

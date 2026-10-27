@@ -112,7 +112,7 @@ test("nextWindow: initial lookback, then overlap before the cursor", () => {
   const first = nextWindow(undefined, now, 7);
   assert.equal(first.from.getTime(), now - 7 * DAY);
   assert.equal(first.to.getTime(), now);
-  const next = nextWindow({ last_window_to: at(now - 3600_000) }, now, 7);
+  const next = nextWindow({ last_window_to: at(now - 3600_000) }, now, 7, 0);
   assert.equal(next.from.getTime(), now - 2 * 3600_000, "1h overlap before last cursor");
 });
 

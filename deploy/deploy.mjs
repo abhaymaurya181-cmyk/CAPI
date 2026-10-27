@@ -56,6 +56,7 @@ export const SETTINGS = {
   ORNAVERSE_SCOPE: "openid",
   ORNAVERSE_POSTED_STATUSES: "1", // 1 = posted; returns (2) are never imported
   ORNAVERSE_INITIAL_LOOKBACK_DAYS: "7",
+  ORNAVERSE_HOURLY_LOOKBACK_DAYS: "3",
   ORNAVERSE_RESCAN_DAYS: "30",
   CLICK_MODE: "last",
   CLICK_WINDOW_DAYS: "90",

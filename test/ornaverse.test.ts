@@ -113,6 +113,19 @@ test("mapInvoiceRow: missing transaction_id or document_date → null", () => {
   assert.equal(mapInvoiceRow({ document_date: "2026-10-24T10:00:00" }), null); // no id
 });
 
+test("mapInvoiceRow: ₹0 / missing / negative amount → null (not a purchase)", () => {
+  const base = { transaction_id: 7, document_date: "2026-10-25T11:55:04.473Z", mobile: "9876543210" };
+  assert.equal(mapInvoiceRow({ ...base, net_amount: 0 }), null);
+  assert.equal(mapInvoiceRow(base), null);
+  assert.equal(mapInvoiceRow({ ...base, net_amount: -50 }), null);
+  assert.equal(mapInvoiceRow({ ...base, net_amount: 27209 })?.amount, 27209);
+});
+
+test("mapInvoiceRow: live date format (UTC with Z) is kept as-is", () => {
+  const sale = mapInvoiceRow({ transaction_id: 8, document_date: "2026-10-27T09:09:32.425Z", net_amount: 1 });
+  assert.equal(sale!.event_time.toISOString(), "2026-10-27T09:09:32.425Z");
+});
+
 // ---------- token caching ----------
 
 test("getOrnaverseToken: caches token until near expiry", async () => {

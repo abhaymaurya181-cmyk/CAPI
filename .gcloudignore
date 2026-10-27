@@ -5,6 +5,11 @@
 .env.*
 !.env.example
 service-account*.json
+# Google service-account keys under any name, e.g. lucira-capi-sender-key.json
+*-key.json
+*-key*.json
+# Zipped private docs
+*.zip
 ornaverse-api-docs/
 api-dog*
 .git

@@ -22,6 +22,9 @@ const MAX_STORED_FAILURES = 50;
 // Re-read this much before the last cursor: late-entered POS sales still get
 // picked up, and already-sent ones are skipped as duplicates.
 const OVERLAP_MS = 60 * 60 * 1000;
+// Every hourly pull also re-reads bills dated this many days back: Lucira
+// staff occasionally backdate a bill (max 2–3 days) or post a draft later.
+const DEFAULT_HOURLY_LOOKBACK_DAYS = 3;
 // First ever run (no cursor yet) looks back this far.
 const DEFAULT_INITIAL_LOOKBACK_DAYS = 7;
 // A crashed run's lock expires after this.
@@ -168,11 +171,22 @@ async function acquireLock(source: string): Promise<boolean> {
 export function nextWindow(
   state: SyncState | undefined,
   nowMs: number,
-  initialLookbackDays = Number(process.env.ORNAVERSE_INITIAL_LOOKBACK_DAYS) || DEFAULT_INITIAL_LOOKBACK_DAYS
+  initialLookbackDays = Number(process.env.ORNAVERSE_INITIAL_LOOKBACK_DAYS) || DEFAULT_INITIAL_LOOKBACK_DAYS,
+  hourlyLookbackDays = hourlyLookback()
 ): { from: Date; to: Date } {
   const last = state?.last_window_to?.toMillis();
-  const from = last != null ? last - OVERLAP_MS : nowMs - initialLookbackDays * 24 * 3600 * 1000;
+  const from =
+    last != null
+      ? Math.min(last - OVERLAP_MS, nowMs - hourlyLookbackDays * 24 * 3600 * 1000)
+      : nowMs - initialLookbackDays * 24 * 3600 * 1000;
   return { from: new Date(from), to: new Date(nowMs) };
+}
+
+/** ORNAVERSE_HOURLY_LOOKBACK_DAYS → whole days in [0, 7]; unset or invalid → 3. */
+export function hourlyLookback(raw = process.env.ORNAVERSE_HOURLY_LOOKBACK_DAYS): number {
+  const s = (raw ?? "").trim();
+  if (!/^\d+$/.test(s)) return DEFAULT_HOURLY_LOOKBACK_DAYS;
+  return Math.min(Number(s), 7);
 }
 
 /**
@@ -207,7 +221,9 @@ export async function runOrnaverseSync(trigger: SyncTrigger): Promise<SyncRun & 
       return { ...((await ref.get()).data() as SyncRun), id: ref.id };
     }
 
-    const summary = await importSales(sales, source, ref.id);
+    // Only bills never recorded: the look-back re-reads days of bills every
+    // hour, and re-ingesting one would reset its retries and send it again.
+    const summary = await importSales(sales, source, ref.id, { onlyNew: true });
     await ref.update({ status: finalStatus(summary), finished_at: Timestamp.now(), ...summary });
     // Rows that failed to ingest are listed on the run; the cursor still
     // moves so one bad row cannot block the feed.

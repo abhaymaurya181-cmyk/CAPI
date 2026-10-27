@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { keepNewSales, nextWindow, rescanDays } from "../src/lib/sync.js";
+import { hourlyLookback, keepNewSales, nextWindow, rescanDays } from "../src/lib/sync.js";
 import type { SaleInput } from "../src/lib/matcher.js";
 
 const sale = (id: string): SaleInput => ({
@@ -34,4 +34,23 @@ test("nextWindow (hourly cursor) is unchanged by the re-scan design", () => {
   const w = nextWindow({ last_window_to: undefined }, now, 7);
   assert.equal(w.to.getTime(), now);
   assert.equal(now - w.from.getTime(), 7 * 24 * 3600 * 1000);
+});
+
+test("nextWindow: hourly pull re-reads the last N days (backdated bills), keeps the 1h overlap if older", () => {
+  const DAY = 24 * 3600 * 1000;
+  const now = Date.parse("2026-10-27T10:00:00Z");
+  const lastHour = { last_window_to: { toMillis: () => now - 3600_000 } } as never;
+  assert.equal(nextWindow(lastHour, now, 7, 3).from.getTime(), now - 3 * DAY);
+  assert.equal(nextWindow(lastHour, now, 7, 0).from.getTime(), now - 2 * 3600_000);
+  // Cursor 5 days old (outage): the overlap reaches further back than the look-back.
+  const old = { last_window_to: { toMillis: () => now - 5 * DAY } } as never;
+  assert.equal(nextWindow(old, now, 7, 3).from.getTime(), now - 5 * DAY - 3600_000);
+});
+
+test("hourlyLookback: default 3, whole days 0..7, junk → default", () => {
+  assert.equal(hourlyLookback(undefined), 3);
+  assert.equal(hourlyLookback("0"), 0);
+  assert.equal(hourlyLookback(" 2 "), 2);
+  assert.equal(hourlyLookback("30"), 7);
+  for (const junk of ["", "-1", "1.5", "abc"]) assert.equal(hourlyLookback(junk), 3, junk);
 });
