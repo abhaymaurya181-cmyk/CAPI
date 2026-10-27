@@ -15,7 +15,9 @@
 //   node deploy/deploy.mjs scheduler     --project <gcp-project> [--dry-run]
 //   node deploy/deploy.mjs all           --project <gcp-project> [--dry-run]   # service + scheduler
 // Options: --region (default asia-south1), --service (default lucira-capi),
-//          --service-account <email> (grant only; default = Compute default SA).
+//          --service-account <email>: for `grant`, the SA that gets the IAM
+//          bindings; for `service` / `all`, the SA Cloud Run will run as.
+//          Default on both is the project's Compute default SA.
 // --dry-run prints exactly what would happen and changes nothing.
 //
 // Non-secret settings use production defaults (see SETTINGS below). Override
@@ -189,7 +191,7 @@ function printCmd(args) {
 // ---------------------------------------------------------------- commands
 
 function deployService(opts) {
-  const { project, region, service, dryRun } = opts;
+  const { project, region, service, dryRun, serviceAccount } = opts;
   const image = `${region}-docker.pkg.dev/${project}/lucira-capi/${service}:latest`;
 
   const existing = new Set(ALL_SECRETS.filter((s) => secretHasValue(s, project)));
@@ -216,6 +218,10 @@ function deployService(opts) {
     "--min-instances", "0", "--max-instances", "10",
     "--env-vars-file", envFile,
     "--set-secrets", secrets.attach.map((s) => `${s}=${s}:latest`).join(","),
+    // When set, Cloud Run runs the container as this SA instead of the project's
+    // default compute SA. Required for Google Ads: only the identity added as a
+    // user in Google Ads can call the Data Manager API — a mismatch here = 403.
+    ...(serviceAccount ? ["--service-account", serviceAccount] : []),
   ];
 
   try {
