@@ -79,7 +79,7 @@ test("parseArgs: commands, flags, validation", () => {
   assert.equal(o.command, "service");
   assert.equal(o.project, "lucira-prod");
   assert.equal(o.dryRun, true);
-  assert.equal(o.region, "asia-south1");
+  assert.equal(o.region, "us-central1");
   assert.throws(() => d.parseArgs(["deploy", "--project", "p"]), /command must be/);
   assert.throws(() => d.parseArgs(["service", "--project"]), /needs a value/);
   assert.throws(() => d.parseArgs(["service", "--project", "Bad Name"]), /invalid --project/);
