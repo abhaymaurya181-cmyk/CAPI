@@ -7,7 +7,7 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 export function requireBearer(
   req: FastifyRequest,
   reply: FastifyReply,
-  envName: "ADMIN_TOKEN" | "INTERNAL_TOKEN"
+  envName: "LUCIRA_CREDS_CAPI" | "INTERNAL_TOKEN"
 ): boolean {
   const expected = process.env[envName];
   if (!expected) {

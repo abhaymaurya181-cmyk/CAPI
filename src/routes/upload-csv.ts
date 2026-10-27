@@ -25,7 +25,7 @@ const body = z.object({
 
 export default async function uploadCsvRoute(app: FastifyInstance): Promise<void> {
   app.post("/admin/api/upload/offline-sales", async (req, reply) => {
-    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
 
     const parsed = body.safeParse(req.body);
     if (!parsed.success) {

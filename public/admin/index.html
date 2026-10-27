@@ -908,7 +908,6 @@
         <nav>
           <button class="active" data-tab="visitors">Visitors</button>
           <button data-tab="conversions">Conversions</button>
-          <button data-tab="sync">Sync log</button>
         </nav>
       </aside>
       <main>
@@ -1046,7 +1045,7 @@
       <h2>Edit profile</h2>
       <p>
         Credentials are read from the server's <code>.env</code> at startup. To change the
-        admin username or password, update <code>ADMIN_USERNAME</code> and <code>ADMIN_TOKEN</code>
+        admin username or password, update <code>ADMIN_USERNAME</code> and <code>LUCIRA_CREDS_CAPI</code>
         in <code>.env</code> (or Secret Manager in production) and restart the service.
         In-app profile editing will come once Firestore-backed credentials are added.
       </p>

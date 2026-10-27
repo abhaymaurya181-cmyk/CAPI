@@ -91,7 +91,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
     async (req, reply) => {
       const { username, password } = req.body ?? {};
       const expectedUser = process.env.ADMIN_USERNAME ?? "admin";
-      const expectedPass = process.env.ADMIN_TOKEN;
+      const expectedPass = process.env.LUCIRA_CREDS_CAPI;
       if (!expectedPass) {
         return reply.code(500).send({ error: "server_misconfigured" });
       }
@@ -105,7 +105,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   app.get<{ Querystring: { range?: string; from?: string; to?: string } }>(
     "/admin/api/stats",
     async (req, reply) => {
-      if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+      if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
 
       const range = parseRange(req.query);
       const rangedConversions = applyRange(conversionsCol, range);
@@ -169,7 +169,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
    * ?dry_run=1 only counts.
    */
   app.post<{ Querystring: { dry_run?: string } }>("/admin/api/sync-now", async (req, reply) => {
-    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const dryRun = req.query.dry_run === "1";
     const requeue = await requeueStuck({ dryRun });
     const sweep = dryRun ? null : await sweepRetries();
@@ -180,7 +180,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   app.get<{
     Querystring: { status?: string; limit?: string; range?: string; from?: string; to?: string };
   }>("/admin/api/conversions", async (req, reply) => {
-    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
 
     const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
     const range = parseRange(req.query);
@@ -233,7 +233,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   app.get<{ Params: { orderId: string } }>(
     "/admin/api/conversions/:orderId",
     async (req, reply) => {
-      if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+      if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
 
       const log = await getConversion(req.params.orderId);
       if (!log) return reply.code(404).send({ error: "not_found" });
@@ -259,7 +259,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   app.post<{ Params: { orderId: string } }>(
     "/admin/api/conversions/:orderId/retry",
     async (req, reply) => {
-      if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+      if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
 
       const log = await getConversion(req.params.orderId);
       if (!log) return reply.code(404).send({ error: "not_found" });
@@ -274,7 +274,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   app.get<{
     Querystring: { search?: string; range?: string; from?: string; to?: string; limit?: string };
   }>("/admin/api/visitors", async (req, reply) => {
-    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
 
     const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
     const search = (req.query.search ?? "").trim();
@@ -314,7 +314,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   app.get<{ Params: { key: string } }>(
     "/admin/api/visitors/:key",
     async (req, reply) => {
-      if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+      if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
       const snap = await visitorsCol.doc(req.params.key).get();
       if (!snap.exists) return reply.code(404).send({ error: "not_found" });
       return reply.send(serializeVisitor(snap.id, snap.data() as Visitor));
@@ -327,7 +327,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
   app.get<{ Params: { orderId: string } }>(
     "/admin/api/conversions/:orderId/preview",
     async (req, reply) => {
-      if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+      if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
       const log = await getConversion(req.params.orderId);
       if (!log) return reply.code(404).send({ error: "not_found" });
       return reply.send(previewPayloads(log, { simulated: false }));
@@ -342,7 +342,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
     Params: { key: string };
     Querystring: { amount?: string; currency?: string; store?: string };
   }>("/admin/api/visitors/:key/preview", async (req, reply) => {
-    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const snap = await visitorsCol.doc(req.params.key).get();
     if (!snap.exists) return reply.code(404).send({ error: "not_found" });
     const visitor = snap.data() as Visitor;

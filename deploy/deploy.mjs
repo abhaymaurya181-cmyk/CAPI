@@ -24,7 +24,7 @@
 //   Linux / macOS:       GOOGLE_VALIDATE_ONLY=false node deploy/deploy.mjs service --project p
 //
 // Secrets live in Google Secret Manager (never in this file, git or chat).
-// Only ADMIN_TOKEN and INTERNAL_TOKEN are required; each integration is
+// Only LUCIRA_CREDS_CAPI and INTERNAL_TOKEN are required; each integration is
 // attached once its secrets exist, so we can go live in stages.
 
 import { spawnSync } from "node:child_process";
@@ -39,7 +39,7 @@ const IS_WINDOWS = process.platform === "win32";
 
 // ---------------------------------------------------------------- config
 
-export const REQUIRED_SECRETS = ["ADMIN_TOKEN", "INTERNAL_TOKEN"];
+export const REQUIRED_SECRETS = ["LUCIRA_CREDS_CAPI", "INTERNAL_TOKEN"];
 
 /** Integration secrets: attached only if they exist (staged go-live). */
 export const SECRET_GROUPS = {

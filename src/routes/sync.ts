@@ -48,14 +48,14 @@ export default async function syncRoute(app: FastifyInstance): Promise<void> {
 
   // "Sync now" for the offline feed from the admin UI.
   app.post("/admin/api/sync-offline", async (req, reply) => {
-    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const run = await runOrnaverseSync("manual");
     return reply.send(serializeRun(run.id, run));
   });
 
   // Sync log, newest first.
   app.get<{ Querystring: { limit?: string } }>("/admin/api/sync-runs", async (req, reply) => {
-    if (!requireBearer(req, reply, "ADMIN_TOKEN")) return;
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
     const snap = await syncRunsCol.orderBy("started_at", "desc").limit(limit).get();
     const items = snap.docs.map((d) => serializeRun(d.id, d.data() as SyncRun));

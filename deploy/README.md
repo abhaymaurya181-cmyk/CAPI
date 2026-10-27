@@ -25,7 +25,7 @@ hidden — it never appears on screen, in shell history or in the command line. 
 for an existing secret adds a new version (that's how you change a value).
 
 ```sh
-node deploy/deploy.mjs secret ADMIN_TOKEN --project <project-id>
+node deploy/deploy.mjs secret LUCIRA_CREDS_CAPI --project <project-id>
 node deploy/deploy.mjs secret INTERNAL_TOKEN --project <project-id>
 ```
 
@@ -73,7 +73,7 @@ node deploy/deploy.mjs service --project <project-id>
 `--dry-run` lists which secrets will be attached / are missing and the exact commands, and
 changes nothing. Works from any folder.
 
-- Only `ADMIN_TOKEN` and `INTERNAL_TOKEN` are required. A half-configured integration is flagged.
+- Only `LUCIRA_CREDS_CAPI` and `INTERNAL_TOKEN` are required. A half-configured integration is flagged.
 - Non-secret settings use production defaults (`ORNAVERSE_POSTED_STATUSES=1`, `CLICK_MODE=last`,
   `GOOGLE_VALIDATE_ONLY=true`, … — see `SETTINGS` in `deploy.mjs`). Override one with an
   environment variable for that run:
@@ -85,7 +85,7 @@ changes nothing. Works from any folder.
 First deploy prints the service URL. Use it to:
 
 - Point the DNS CNAME `track.lucirajewelry.com` → the service URL via Cloud Run domain mapping (`gcloud run domain-mappings create`)
-- Open `<url>/admin/` and sign in with `ADMIN_TOKEN`
+- Open `<url>/admin/` and sign in with `LUCIRA_CREDS_CAPI`
 
 ## Scheduled jobs
 
@@ -108,5 +108,5 @@ On Windows use `curl.exe` (in PowerShell, plain `curl` is a different command).
 ```sh
 gcloud run services describe lucira-capi --region asia-south1 --format "value(status.url)"
 curl.exe -s <service-url>/health
-curl.exe -s -H "Authorization: Bearer <ADMIN_TOKEN>" <service-url>/admin/api/stats
+curl.exe -s -H "Authorization: Bearer <LUCIRA_CREDS_CAPI>" <service-url>/admin/api/stats
 ```

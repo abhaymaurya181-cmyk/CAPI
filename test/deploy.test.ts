@@ -6,28 +6,28 @@ import * as d from "../deploy/deploy.mjs";
 const ORNA = ["ORNAVERSE_API_BASE", "ORNAVERSE_CLIENT_ID", "ORNAVERSE_CLIENT_SECRET"];
 
 test("planSecrets: required missing → error, deploy must stop", () => {
-  const p = d.planSecrets(new Set(["ADMIN_TOKEN"]));
+  const p = d.planSecrets(new Set(["LUCIRA_CREDS_CAPI"]));
   assert.equal(p.errors.length, 1);
   assert.match(p.errors[0], /INTERNAL_TOKEN/);
 });
 
 test("planSecrets: OrnaVerse only → attached, Meta/Google listed missing, no warnings", () => {
-  const p = d.planSecrets(new Set(["ADMIN_TOKEN", "INTERNAL_TOKEN", ...ORNA]));
+  const p = d.planSecrets(new Set(["LUCIRA_CREDS_CAPI", "INTERNAL_TOKEN", ...ORNA]));
   assert.deepEqual(p.errors, []);
   assert.deepEqual(p.warnings, []);
-  assert.deepEqual(p.attach, ["ADMIN_TOKEN", "INTERNAL_TOKEN", ...ORNA]);
+  assert.deepEqual(p.attach, ["LUCIRA_CREDS_CAPI", "INTERNAL_TOKEN", ...ORNA]);
   assert.ok(p.missing.includes("META_PIXEL_ID") && p.missing.includes("GOOGLE_ADS_CUSTOMER_ID"));
 });
 
 test("planSecrets: half-configured integration → warning naming what's missing", () => {
-  const p = d.planSecrets(new Set(["ADMIN_TOKEN", "INTERNAL_TOKEN", "ORNAVERSE_API_BASE", "META_PIXEL_ID"]));
+  const p = d.planSecrets(new Set(["LUCIRA_CREDS_CAPI", "INTERNAL_TOKEN", "ORNAVERSE_API_BASE", "META_PIXEL_ID"]));
   assert.equal(p.warnings.length, 2);
   assert.match(p.warnings.join("\n"), /OrnaVerse is partly configured \(1\/3\)/);
   assert.match(p.warnings.join("\n"), /Meta is partly configured.*META_CAPI_ACCESS_TOKEN/);
 });
 
 test("planSecrets: optional manager id is never a warning on its own", () => {
-  const all = ["ADMIN_TOKEN", "INTERNAL_TOKEN", ...ORNA, "META_PIXEL_ID", "META_CAPI_ACCESS_TOKEN",
+  const all = ["LUCIRA_CREDS_CAPI", "INTERNAL_TOKEN", ...ORNA, "META_PIXEL_ID", "META_CAPI_ACCESS_TOKEN",
     "GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CONVERSION_ACTION_OFFLINE"];
   const p = d.planSecrets(new Set(all));
   assert.deepEqual(p.warnings, []);
@@ -91,7 +91,7 @@ test("parseArgs: secret only accepts known names, no dry-run; grant validates th
   assert.equal(s.secretName, "ORNAVERSE_CLIENT_SECRET");
   assert.throws(() => d.parseArgs(["secret", "TYPO_NAME", "--project", "p1"]), /known name/);
   assert.throws(() => d.parseArgs(["secret", "--project", "p1"]), /known name/);
-  assert.throws(() => d.parseArgs(["secret", "ADMIN_TOKEN", "--project", "p1", "--dry-run"]), /no --dry-run/);
+  assert.throws(() => d.parseArgs(["secret", "LUCIRA_CREDS_CAPI", "--project", "p1", "--dry-run"]), /no --dry-run/);
   const g = d.parseArgs(["grant", "--project", "p1", "--service-account", "capi@p1.iam.gserviceaccount.com"]);
   assert.equal(g.serviceAccount, "capi@p1.iam.gserviceaccount.com");
   assert.throws(() => d.parseArgs(["grant", "--project", "p1", "--service-account", "x;rm"]), /invalid --service-account/);
