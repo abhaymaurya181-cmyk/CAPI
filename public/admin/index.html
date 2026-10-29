@@ -965,17 +965,14 @@
             </select>
             <input type="date" id="conversions-from" class="hidden" />
             <input type="date" id="conversions-to" class="hidden" />
-            <select id="conversions-status">
-              <option value="">All statuses</option>
-              <option value="unsent">Not sent yet (pending / retrying / failed)</option>
-              <option value="pending">Pending</option>
-              <option value="retrying">Retrying</option>
-              <option value="failed">Failed</option>
-              <option value="validated">Validated (Google test)</option>
+            <select id="conversions-match" title="Filter by how the store sale matched a website visitor">
+              <option value="phone" selected>Phone</option>
+              <option value="email">Email</option>
+              <option value="any">Any match</option>
+              <option value="no_visitor">No visitor</option>
+              <option value="">All</option>
             </select>
             <button class="btn-ghost" id="conversions-refresh" type="button">Refresh</button>
-            <button class="btn-ghost" id="conversions-resend" type="button"
-              title="Put stuck sales back in the queue and send them: missed retries, sales that failed only because Meta/Google weren't set up yet, and Google test-mode sales once Google is live. Already-sent and permanently failed sales are never re-sent.">Resend stuck</button>
             <span class="toolbar-msg" id="conversions-msg"></span>
           </div>
           <div class="table-wrap">
@@ -1498,16 +1495,21 @@
       countEl.textContent = "—";
 
       const params = buildRangeQuery("conversions");
-      const status = $("#conversions-status").value;
-      if (status) params.set("status", status);
-      params.set("limit", "100");
+      params.set("limit", "500");
 
       try {
         const res = await api("/admin/api/conversions?" + params.toString());
         const search = $("#conversions-search").value.trim().toLowerCase();
-        const filtered = search
-          ? res.items.filter((it) => (it.order_id || "").toLowerCase().includes(search))
-          : res.items;
+        const matchFilter = $("#conversions-match").value;
+
+        let filtered = res.items;
+        if (matchFilter === "phone") filtered = filtered.filter((it) => it.matched_by === "phone");
+        else if (matchFilter === "email") filtered = filtered.filter((it) => it.matched_by === "email");
+        else if (matchFilter === "any") filtered = filtered.filter((it) => !!it.matched_by);
+        else if (matchFilter === "no_visitor") filtered = filtered.filter((it) => !it.matched_by);
+        if (search) {
+          filtered = filtered.filter((it) => (it.order_id || "").toLowerCase().includes(search));
+        }
 
         countEl.textContent = `${filtered.length} conversion${filtered.length === 1 ? "" : "s"}`;
         if (filtered.length === 0) {
@@ -1740,30 +1742,9 @@
 
     $("#visitors-search").addEventListener("input", debounce(loadVisitors, 350));
     $("#conversions-search").addEventListener("input", debounce(loadConversions, 200));
-    $("#conversions-status").addEventListener("change", loadConversions);
+    $("#conversions-match").addEventListener("change", loadConversions);
     $("#visitors-refresh").addEventListener("click", loadVisitors);
     $("#conversions-refresh").addEventListener("click", loadConversions);
-    $("#sync-refresh").addEventListener("click", loadSync);
-
-    $("#sync-run").addEventListener("click", (e) =>
-      runAction(e.currentTarget, $("#sync-msg"), async () => {
-        const r = await api("/admin/api/sync-offline", { method: "POST", body: "{}" });
-        loadSync();
-        return r.status === "skipped"
-          ? `Skipped: ${r.error}`
-          : `${r.status}: ${r.processed} sent, ${r.matched} matched, ${r.failed} failed`;
-      })
-    );
-
-    $("#conversions-resend").addEventListener("click", (e) =>
-      runAction(e.currentTarget, $("#conversions-msg"), async () => {
-        const r = await api("/admin/api/sync-now", { method: "POST", body: "{}" });
-        loadConversions();
-        if (!r.requeued) return `Nothing stuck (checked ${r.scanned})`;
-        const reasons = Object.entries(r.by_reason || {}).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join(", ");
-        return `Requeued ${r.requeued} (${reasons}); sending ${r.sweep ? r.sweep.due : 0} now, rest within 5 min`;
-      })
-    );
 
     // "Send again now" inside an expanded conversion.
     $("#conversions-body").addEventListener("click", (e) => {
