@@ -36,7 +36,7 @@ test("planSecrets: optional manager id is never a warning on its own", () => {
 
 test("planSettings: production defaults, env overrides, test code warns", () => {
   const def = d.planSettings("proj", {});
-  assert.equal(def.settings.GOOGLE_VALIDATE_ONLY, "true");
+  assert.equal(def.settings.GOOGLE_VALIDATE_ONLY, "false");
   assert.equal(def.settings.ORNAVERSE_POSTED_STATUSES, "1");
   assert.equal(def.settings.GOOGLE_CLOUD_PROJECT, "proj");
   assert.equal(def.settings.META_TEST_EVENT_CODE, undefined);
