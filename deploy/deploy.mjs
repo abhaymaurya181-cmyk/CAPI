@@ -54,7 +54,7 @@ export const SECRET_GROUPS = {
 
 /** Non-secret settings and their production defaults (env var overrides). */
 export const SETTINGS = {
-  GOOGLE_VALIDATE_ONLY: "true", // stays true until Google's validateOnly checks pass
+  GOOGLE_VALIDATE_ONLY: "false", // live: real conversions reach Google Ads reports
   ORNAVERSE_SCOPE: "openid",
   ORNAVERSE_POSTED_STATUSES: "1", // 1 = posted; returns (2) are never imported
   ORNAVERSE_INITIAL_LOOKBACK_DAYS: "7",
