@@ -856,6 +856,69 @@
     }
     .kv-val.empty { color: var(--muted); font-style: italic; }
     .kv-val.hash  { color: var(--muted); font-size: 12px; }
+
+    /* Analytics */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .kpi {
+      background: #fff;
+      border: 1px solid #ece5e2;
+      border-top: 3px solid var(--warn);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .kpi-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .kpi-value {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text);
+      margin-top: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .chip-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .chip-group-label {
+      font-size: 11px; font-weight: 600; color: var(--brand);
+      text-transform: uppercase; letter-spacing: 0.06em; min-width: 110px;
+    }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px; font-size: 13px;
+      background: #f1ebe9; color: var(--text);
+    }
+    .chip b {
+      background: rgba(255, 255, 255, 0.75); border-radius: 999px;
+      padding: 0 7px; font-size: 12px; font-variant-numeric: tabular-nums;
+    }
+    .chip.ok { background: #e4f3eb; color: var(--success); }
+    .chip.warn { background: #fff2d9; color: #a06400; }
+    .chip.bad { background: #fde7e9; color: var(--destructive); }
+    .chip.info { background: #e6eefc; color: #2a5bb8; }
+    .analytics-tables {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 18px;
+      margin-top: 18px;
+    }
+    .analytics-tables h3 {
+      font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--brand); margin: 0 0 8px;
+    }
+    .analytics-tables .table-wrap { max-height: 420px; }
+    .bar {
+      display: inline-block; height: 8px; border-radius: 4px;
+      background: var(--accent); vertical-align: middle; margin-right: 8px;
+    }
   </style>
 </head>
 
@@ -908,6 +971,7 @@
         <nav>
           <button class="active" data-tab="visitors">Visitors</button>
           <button data-tab="conversions">Conversions</button>
+          <button data-tab="analytics">Analytics</button>
         </nav>
       </aside>
       <main>
@@ -994,6 +1058,72 @@
                 <tr><td colspan="9" class="muted center">Loading…</td></tr>
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section id="tab-analytics" class="tab hidden">
+          <div class="page-header">
+            <h2>Analytics</h2>
+            <div class="muted" id="analytics-note">By sale date (India time)</div>
+          </div>
+          <div class="toolbar">
+            <select id="analytics-range">
+              <option value="today">Today</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d" selected>Last 30 days</option>
+              <option value="all">All time</option>
+              <option value="custom">Custom range…</option>
+            </select>
+            <input type="date" id="analytics-from" class="hidden" />
+            <input type="date" id="analytics-to" class="hidden" />
+            <select id="analytics-channel" title="Store sales or website orders">
+              <option value="">Online + offline</option>
+              <option value="offline">Offline (store)</option>
+              <option value="online">Online (website)</option>
+            </select>
+            <select id="analytics-store" title="Store">
+              <option value="">All stores</option>
+            </select>
+            <button class="btn-ghost" id="analytics-refresh" type="button">Refresh</button>
+            <span class="toolbar-msg" id="analytics-msg"></span>
+          </div>
+          <div class="kpi-grid" id="analytics-kpis"></div>
+          <div id="analytics-chips"></div>
+          <div class="analytics-tables">
+            <div>
+              <h3>By store</h3>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Store</th>
+                      <th class="num">Orders</th>
+                      <th class="num">Value</th>
+                      <th class="num">Matched</th>
+                      <th class="num">With ad click</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-stores"></tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <h3>By day</h3>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Value</th>
+                      <th class="num">Orders</th>
+                      <th class="num">Matched</th>
+                      <th class="num">With ad click</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-days"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1157,6 +1287,7 @@
         $("#tab-" + tab).classList.remove("hidden");
         if (tab === "visitors") loadVisitors();
         if (tab === "conversions") loadConversions();
+        if (tab === "analytics") loadAnalytics();
         if (tab === "sync") loadSync();
       });
     });
@@ -1234,11 +1365,15 @@
         const custom = sel.value === "custom";
         from.classList.toggle("hidden", !custom);
         to.classList.toggle("hidden", !custom);
-        if (prefix === "visitors") loadVisitors();
-        else loadConversions();
+        reload();
       });
-      from.addEventListener("change", () => prefix === "visitors" ? loadVisitors() : loadConversions());
-      to.addEventListener("change", () => prefix === "visitors" ? loadVisitors() : loadConversions());
+      from.addEventListener("change", reload);
+      to.addEventListener("change", reload);
+      function reload() {
+        if (prefix === "visitors") loadVisitors();
+        else if (prefix === "analytics") loadAnalytics();
+        else loadConversions();
+      }
     }
 
     function esc(s) {
@@ -1732,10 +1867,125 @@
       }
     }
 
+    // ---- Analytics page ----
+
+    const pct = (r) => `${Math.round((r || 0) * 100)}%`;
+
+    function kpi(label, value, sub) {
+      return `
+        <div class="kpi">
+          <div class="kpi-label">${esc(label)}</div>
+          <div class="kpi-value">${value}</div>
+          ${sub ? `<div class="kpi-sub">${sub}</div>` : ""}
+        </div>`;
+    }
+
+    function chip(label, n, cls) {
+      return `<span class="chip ${cls || ""}">${esc(label)} <b>${n}</b></span>`;
+    }
+
+    function chipGroup(label, chips) {
+      return `<div class="chip-group"><span class="chip-group-label">${esc(label)}</span>${chips.join("")}</div>`;
+    }
+
+    // Google status chips. Meta has its own row only once it is in use.
+    function senderChips(s) {
+      return [
+        chip("Sent", s.success, "ok"),
+        chip("Test mode", s.validated, "info"),
+        chip("Pending", s.pending, "warn"),
+        chip("Retrying", s.retrying, "warn"),
+        chip("Failed", s.failed, "bad"),
+        chip("Not sent", s.none),
+      ];
+    }
+
+    function bucketRow(first, b, extra = "") {
+      return `
+        <tr>
+          <td>${first}</td>
+          ${extra}
+          <td class="num">${b.orders}</td>
+          ${extra ? "" : `<td class="num">${fmtMoney(b.value)}</td>`}
+          <td class="num">${b.matched} <span class="muted">(${pct(b.orders ? b.matched / b.orders : 0)})</span></td>
+          <td class="num">${b.with_click}</td>
+        </tr>`;
+    }
+
+    async function loadAnalytics() {
+      const msg = $("#analytics-msg");
+      msg.classList.remove("err");
+      msg.textContent = "Loading…";
+      const params = buildRangeQuery("analytics");
+      const channel = $("#analytics-channel").value;
+      const storeSel = $("#analytics-store");
+      if (channel) params.set("channel", channel);
+      if (storeSel.value) params.set("store", storeSel.value);
+
+      try {
+        const a = await api("/admin/api/analytics?" + params.toString());
+        msg.textContent = a.truncated ? "Showing the latest 5,000 sales only — narrow the date range." : "";
+
+        // Keep the store dropdown in step with the stores in this range.
+        const current = storeSel.value;
+        storeSel.innerHTML = `<option value="">All stores</option>` +
+          a.stores.map((s) => `<option value="${esc(s)}"${s === current ? " selected" : ""}>${esc(s)}</option>`).join("");
+
+        const t = a.totals;
+        const attention = a.google.failed + a.google.retrying;
+        $("#analytics-kpis").innerHTML = [
+          kpi("Total orders", t.orders.toLocaleString()),
+          kpi("Total value", fmtMoney(t.value), `Avg ${fmtMoney(t.avg_order_value)}`),
+          kpi("Matched to visitor", t.matched.toLocaleString(), `${pct(t.match_rate)} of orders`),
+          kpi("With ad click", t.with_click.toLocaleString(), `${pct(t.click_rate)} of orders`),
+          kpi("Sent to Google", a.google.success.toLocaleString(),
+            a.google.validated ? `${a.google.validated} in test mode` : ""),
+          kpi("Needs attention", attention.toLocaleString(), "Google failed or retrying"),
+        ].join("");
+
+        const metaUsed = a.meta.none < t.orders;
+        $("#analytics-chips").innerHTML = [
+          chipGroup("Channel", [chip("Offline (store)", a.channel.offline), chip("Online (website)", a.channel.online)]),
+          chipGroup("Matched by", [
+            chip("Phone", a.matched_by.phone, "ok"),
+            chip("Email", a.matched_by.email, "ok"),
+            chip("No visitor", a.matched_by.none),
+          ]),
+          chipGroup("Ad click", [
+            chip("Google click", a.ad_click.google, "info"),
+            chip("Meta click", a.ad_click.meta, "info"),
+            chip("No click", a.ad_click.none),
+          ]),
+          chipGroup("Google", senderChips(a.google)),
+          metaUsed ? chipGroup("Meta", senderChips(a.meta)) : "",
+        ].join("");
+
+        $("#analytics-stores").innerHTML = a.by_store.length
+          ? a.by_store.map((b) => bucketRow(esc(b.store), b)).join("")
+          : `<tr><td colspan="5" class="muted center">No sales in this range.</td></tr>`;
+
+        const maxDay = Math.max(1, ...a.by_day.map((d) => d.value));
+        $("#analytics-days").innerHTML = a.by_day.length
+          ? a.by_day.map((b) => {
+              const day = new Date(b.date + "T00:00:00").toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+              const bar = `<td><span class="bar" style="width:${Math.max(2, Math.round((b.value / maxDay) * 120))}px"></span>${fmtMoney(b.value)}</td>`;
+              return bucketRow(day, b, bar);
+            }).join("")
+          : `<tr><td colspan="5" class="muted center">No sales in this range.</td></tr>`;
+      } catch (err) {
+        msg.classList.add("err");
+        msg.textContent = "Failed to load: " + err.message;
+      }
+    }
+
     // ---- Wire controls ----
 
     wireRangeToggle("visitors");
     wireRangeToggle("conversions");
+    wireRangeToggle("analytics");
+    $("#analytics-channel").addEventListener("change", loadAnalytics);
+    $("#analytics-store").addEventListener("change", loadAnalytics);
+    $("#analytics-refresh").addEventListener("click", loadAnalytics);
     wireExpand("#visitors-body", 6, (key) => Promise.resolve(renderVisitorExpansion(key)));
     wireExpand("#conversions-body", 9, (orderId) => renderConversionExpansion(orderId));
     wireExpand("#sync-body", 11, (id) => Promise.resolve(renderSyncExpansion(id)));

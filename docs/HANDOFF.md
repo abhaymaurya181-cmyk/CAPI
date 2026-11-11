@@ -50,12 +50,13 @@ The repo is **offline-only** (the Shopify online-order webhook was removed). Fir
 | 6 Matcher, sync log, hourly sync, retry back-off | ✅ done; now combines a person's visitor docs + gmail variants |
 | 6+ Stuck-sale recovery (`requeueStuck`, daily + admin "Resend stuck") | ✅ done 2026-10-25 |
 | 7 Admin: sync log, match details, resend, payload preview, IP geo | ✅ done |
+| 7+ Admin **Analytics** tab (`/admin/api/analytics`, `src/lib/analytics.ts`) | ✅ done 2026-11-11 |
 | 8 CSV upload route | ✅ route done; upload **page** deferred by user |
 | Deploy tooling (`deploy/deploy.mjs`, one script for Windows/Linux/macOS) | ✅ done; Linux path not yet run; no real deploy yet |
 | Live Meta / Google tests | ❌ waiting for credentials (see Env) |
 | Deploy (Cloud Run, scheduler, indexes, domain, GTM) | ❌ waiting for a Google Cloud project |
 
-`npm test` → 101 passing. `npm run typecheck` clean.
+`npm test` → 106 passing. `npm run typecheck` clean.
 
 ## What was built on 2026-10-25 (this laptop)
 
@@ -185,6 +186,23 @@ node deploy/deploy.mjs all --project <id>              # service + 3 scheduler j
 Only `ADMIN_TOKEN` + `INTERNAL_TOKEN` are required; each integration switches on when its secrets exist
 (staged go-live). Verified on Windows end-to-end against a fake gcloud; the Linux/macOS path has not been
 run yet — have a teammate run `--dry-run` once. Blocked on: which Google Cloud project to use.
+
+## Upgrade round (2026-11-11) — user's 3 tasks
+
+1. **Online (Shopify) orders in the dashboard — SHOW ONLY, never send to Google/Meta** (Lucira's website
+   already reports online purchases with its own Purchase event; sending would double count).
+   Plan: hourly read-only pull of paid orders (Shopify Admin API, `read_orders` only, with protected
+   customer data access for email/phone/name) → match to visitors → store with `action_source: "website"`
+   → appears under the Online filter. ❌ Waiting for `SHOPIFY_STORE_DOMAIN` + `SHOPIFY_ADMIN_TOKEN` in `.env`.
+2. ✅ **Analytics tab** — OMS-style: filters (date range by sale date in IST, online/offline, store), KPI
+   cards (orders, value, matched, with ad click, sent to Google, needs attention), chips (channel, matched
+   by, ad click, Google status; Meta row once Meta is used), by-store and by-day tables. Built only from
+   data we already store (no category, no city — user's choice). Verified on the Firestore emulator.
+3. **Google: send store sales to Lucira's own existing Purchase conversion action**; set "offline (web)"
+   to Secondary in Google Ads (user/teammate). First run `npm run google:validate` against the Purchase
+   action id (validateOnly) — website-tag-only actions may reject server-sent sales; if so, create a
+   Purchase action of type Import and use that. Likely only `GOOGLE_ADS_CONVERSION_ACTION_OFFLINE` changes.
+   ❌ Waiting for the Purchase action id (`ctId=`).
 
 ## Next actions (in order)
 

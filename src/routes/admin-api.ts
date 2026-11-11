@@ -19,6 +19,7 @@ import { sweepRetries } from "./retry-sweep.js";
 import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
 import { buildConversion, type SaleInput } from "../lib/matcher.js";
 import { buildMetaPayload, metaPreflightError } from "../senders/meta.js";
+import { summarizeConversions, type Channel } from "../lib/analytics.js";
 import {
   INGEST_URL as GOOGLE_INGEST_URL,
   buildGooglePayload,
@@ -64,6 +65,37 @@ function parseRange(query: {
     return { from: Timestamp.fromDate(d), to: null, label: "30d" };
   }
   return { from: startOfTodayUtc(), to: null, label: "today" };
+}
+
+const IST_OFFSET_MS = 5.5 * 3600 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+// Analytics loads every sale in the range; ~10 bills/day, so this is years.
+const ANALYTICS_MAX_ROWS = 5000;
+
+/**
+ * Sale-date range for analytics, in India time: "today" starts at IST
+ * midnight, and a custom ?to= day is included in full.
+ */
+export function parseIstSaleRange(
+  query: { range?: string; from?: string; to?: string },
+  nowMs = Date.now()
+): { from: Date | null; to: Date | null } {
+  const istMidnight = (ymd: string) => new Date(`${ymd}T00:00:00+05:30`);
+  const isDay = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  if (query.from || query.to) {
+    return {
+      from: isDay(query.from) ? istMidnight(query.from!) : null,
+      to: isDay(query.to) ? new Date(istMidnight(query.to!).getTime() + DAY_MS) : null,
+    };
+  }
+  const r = (query.range ?? "30d").toLowerCase();
+  if (r === "all") return { from: null, to: null };
+  if (r === "7d") return { from: new Date(nowMs - 7 * DAY_MS), to: null };
+  if (r === "today") {
+    const todayIst = new Date(nowMs + IST_OFFSET_MS).toISOString().slice(0, 10);
+    return { from: istMidnight(todayIst), to: null };
+  }
+  return { from: new Date(nowMs - 30 * DAY_MS), to: null };
 }
 
 function applyRange(
@@ -159,6 +191,32 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
       });
     }
   );
+
+  // Analytics page: totals, status counts, per-store and per-day breakdowns
+  // for sales whose sale date (event_time) falls in the range.
+  app.get<{
+    Querystring: { range?: string; from?: string; to?: string; channel?: string; store?: string };
+  }>("/admin/api/analytics", async (req, reply) => {
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
+    const range = parseIstSaleRange(req.query);
+    let q: FirebaseFirestore.Query = conversionsCol;
+    if (range.from) q = q.where("event_time", ">=", Timestamp.fromDate(range.from));
+    if (range.to) q = q.where("event_time", "<", Timestamp.fromDate(range.to));
+    const snap = await q.orderBy("event_time", "desc").limit(ANALYTICS_MAX_ROWS).get();
+
+    const channel = req.query.channel === "online" || req.query.channel === "offline"
+      ? (req.query.channel as Channel)
+      : undefined;
+    const summary = summarizeConversions(
+      snap.docs.map((d) => d.data() as ConversionLog),
+      { channel, store: req.query.store || undefined }
+    );
+    return reply.send({
+      range: { from: range.from?.toISOString() ?? null, to: range.to?.toISOString() ?? null },
+      truncated: snap.size === ANALYTICS_MAX_ROWS,
+      ...summary,
+    });
+  });
 
   /**
    * "Resend stuck" in the admin UI. Requeues every stuck sale that can be sent
