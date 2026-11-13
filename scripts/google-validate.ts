@@ -14,7 +14,7 @@ import type { ConversionLog } from "../src/lib/firestore.js";
 process.env.GOOGLE_VALIDATE_ONLY = "true";
 const cfg = googleConfig();
 if (!cfg) {
-  console.error("Set GOOGLE_ADS_CUSTOMER_ID and GOOGLE_ADS_CONVERSION_ACTION_OFFLINE in .env first.");
+  console.error("Set GOOGLE_ADS_CUSTOMER_ID and GOOGLE_ADS_CONVERSION_ACTION_PURCHASE in .env first.");
   process.exit(1);
 }
 

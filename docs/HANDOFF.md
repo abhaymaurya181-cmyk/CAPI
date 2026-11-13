@@ -167,8 +167,8 @@ Meta (❌ waiting): `META_PIXEL_ID`, `META_CAPI_ACCESS_TOKEN`, `META_TEST_EVENT_
 → `npm run meta:test -- [phone] [email]`.
 
 Google (user has `GOOGLE_ADS_CUSTOMER_ID` + `GOOGLE_ADS_LOGIN_CUSTOMER_ID`; still needed:
-`GOOGLE_ADS_CONVERSION_ACTION_OFFLINE` — the `ctId=` number of the "Store Purchase" action (type Import →
-clicks) — and `GOOGLE_CLOUD_PROJECT`). Auth: a service account in our GCP project, added as a user in
+`GOOGLE_ADS_CONVERSION_ACTION_PURCHASE` — the `ctId=` number of the "Purchase" action (Website, Primary;
+all sales — store + web — report here) — and `GOOGLE_CLOUD_PROJECT`). Auth: a service account in our GCP project, added as a user in
 Google Ads; locally either `GOOGLE_APPLICATION_CREDENTIALS=<key file outside repo>` or (preferred, no key)
 `gcloud auth application-default login --impersonate-service-account=<email>`.
 `GOOGLE_VALIDATE_ONLY=true` until tested → `npm run google:validate -- [phone] [email] [gclid]`.
@@ -198,11 +198,11 @@ run yet — have a teammate run `--dry-run` once. Blocked on: which Google Cloud
    cards (orders, value, matched, with ad click, sent to Google, needs attention), chips (channel, matched
    by, ad click, Google status; Meta row once Meta is used), by-store and by-day tables. Built only from
    data we already store (no category, no city — user's choice). Verified on the Firestore emulator.
-3. **Google: send store sales to Lucira's own existing Purchase conversion action**; set "offline (web)"
-   to Secondary in Google Ads (user/teammate). First run `npm run google:validate` against the Purchase
-   action id (validateOnly) — website-tag-only actions may reject server-sent sales; if so, create a
-   Purchase action of type Import and use that. Likely only `GOOGLE_ADS_CONVERSION_ACTION_OFFLINE` changes.
-   ❌ Waiting for the Purchase action id (`ctId=`).
+3. ✅ **Google: send store sales to Lucira's own existing Purchase conversion action** (ctId `7098647014`,
+   Website / Primary / Data-driven attribution). Env var renamed to `GOOGLE_ADS_CONVERSION_ACTION_PURCHASE`
+   (2026-11-13). Still needed: set old "offline (upload)" to Secondary in Google Ads (user/teammate), and
+   run `npm run google:validate` against the new id with `GOOGLE_VALIDATE_ONLY=true` — a Website-type
+   action may reject server-sent sales; if so, fall back to creating a Purchase action of type Import.
 
 ## Next actions (in order)
 

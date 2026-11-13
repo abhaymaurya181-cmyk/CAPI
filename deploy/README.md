@@ -38,7 +38,7 @@ next deploy:
 |---|---|
 | OrnaVerse | `ORNAVERSE_API_BASE`, `ORNAVERSE_CLIENT_ID`, `ORNAVERSE_CLIENT_SECRET` |
 | Meta | `META_PIXEL_ID`, `META_CAPI_ACCESS_TOKEN` |
-| Google | `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_CONVERSION_ACTION_OFFLINE` |
+| Google | `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_CONVERSION_ACTION_PURCHASE` |
 | Google manager account | `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (only if the Ads account sits under an MCC) |
 
 ### Access

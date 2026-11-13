@@ -127,7 +127,7 @@ function googleErrorMessage(body: string): string | undefined {
 
 export function googleConfig(): GoogleConfig | null {
   const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
-  const conversionActionId = process.env.GOOGLE_ADS_CONVERSION_ACTION_OFFLINE;
+  const conversionActionId = process.env.GOOGLE_ADS_CONVERSION_ACTION_PURCHASE;
   if (!customerId || !conversionActionId) return null;
   return {
     customerId,
