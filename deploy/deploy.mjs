@@ -59,9 +59,10 @@ export const SECRET_GROUPS = {
 /** Non-secret settings and their production defaults (env var overrides). */
 export const SETTINGS = {
   GOOGLE_VALIDATE_ONLY: "false", // live: real Purchase conversions reach Google Ads
-  // Store Visit is ramped up separately and starts in validate-only so the
-  // first sync can be inspected without hitting Google Ads for real.
+  // Store Visit and Website Purchase each have their own flag so they can be
+  // staged in validate-only mode without touching live store sales.
   GOOGLE_STORE_VISIT_VALIDATE_ONLY: "true",
+  GOOGLE_WEBSITE_VALIDATE_ONLY: "true",
   ORNAVERSE_SCOPE: "openid",
   ORNAVERSE_POSTED_STATUSES: "1", // 1 = posted; returns (2) are never imported
   ORNAVERSE_INITIAL_LOOKBACK_DAYS: "7",

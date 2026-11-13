@@ -120,7 +120,7 @@ test("buildConversion: event_type=store_visit → Google-only, no Meta sender", 
   assert.equal(c.google_ads?.status, "pending");
 });
 
-test("buildConversion: action_source=website → no sender records (show-only)", () => {
+test("buildConversion: action_source=website → Google only, no Meta (Shopify pixel fires Meta)", () => {
   const c = buildConversion(sale, "ornaverse_marketplace", visitor(), {
     mode: "last",
     windowMs: WINDOW,
@@ -128,11 +128,9 @@ test("buildConversion: action_source=website → no sender records (show-only)",
     action_source: "website",
   });
   assert.equal(c.action_source, "website");
-  assert.equal(c.meta_capi, undefined, "Meta sender must be skipped for website orders");
-  assert.equal(c.google_ads, undefined, "Google sender must be skipped for website orders");
-  // Match info + hashes still populated so the row is visible in the admin.
+  assert.equal(c.meta_capi, undefined, "Meta is still skipped — Shopify pixel already reports to Meta");
+  assert.equal(c.google_ads?.status, "pending", "Google IS sent (dedupes with gtag by transactionId)");
   assert.equal(c.match?.matched_by, "phone");
-  assert.ok(c.phone_meta);
 });
 
 test("nextWindow: initial lookback, then overlap before the cursor", () => {

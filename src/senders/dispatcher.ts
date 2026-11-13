@@ -17,17 +17,23 @@ export type Sender = "meta_capi" | "google_ads";
 export async function dispatchConversion(orderId: string, only?: Sender): Promise<void> {
   const log = await getConversion(orderId);
   if (!log) return;
-  // Online orders are show-only on the dashboard; Shopify's own pixel already
-  // reports them to Meta and Google, so firing again would double-count.
-  if (log.action_source === "website") return;
 
   const tasks: Promise<void>[] = [];
 
   const isStoreVisit = log.event_type === "store_visit";
+  const isWebsite = log.action_source === "website";
 
-  // Store Visit events go to Google Ads only — Meta has no equivalent and the
-  // store sale already fires the Meta Purchase pixel.
-  if (!isStoreVisit && log.meta_capi?.status !== "success" && (!only || only === "meta_capi")) {
+  // Website orders: Shopify's own pixel already reports to Meta client-side,
+  // so a server CAPI would double-count. Google Ads server-side send IS wanted
+  // (Google dedupes by transactionId across gtag + server), gated by a
+  // dedicated validate flag so we can stage it on separately from store sales.
+  // Store Visits have no Meta equivalent — the sale itself fires Meta.
+  if (
+    !isStoreVisit &&
+    !isWebsite &&
+    log.meta_capi?.status !== "success" &&
+    (!only || only === "meta_capi")
+  ) {
     const attempts = (log.meta_capi?.retries ?? 0) + 1;
     tasks.push(
       sendPurchaseToMeta(log).then((res) =>

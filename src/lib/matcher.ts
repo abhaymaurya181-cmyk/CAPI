@@ -163,16 +163,14 @@ export function buildConversion(
   };
 
   const country = (sale.country ?? "IN").trim();
-  // Website orders are show-only: Shopify's own pixel already reports them
-  // to Google and Meta, so firing again would double-count. We leave the
-  // sender records off entirely; the dispatcher skips them too.
   const action_source: "website" | "physical_store" = opts.action_source ?? "physical_store";
-  const showOnly = action_source === "website";
+  const isWebsite = action_source === "website";
   const event_type = opts.event_type ?? "purchase";
-  // Store Visit events go to Google only; Meta has no equivalent event and
-  // sending a Purchase CAPI with 0 value would skew the pixel.
-  const skipMeta = showOnly || event_type === "store_visit";
-  const skipGoogle = showOnly;
+  // Meta: skipped for website (Shopify client-side pixel already fires) and
+  //       for Store Visit (no Meta equivalent event; the eventual sale fires).
+  // Google: sent in both cases; dedupes server-vs-gtag by transactionId.
+  const skipMeta = isWebsite || event_type === "store_visit";
+  const skipGoogle = false;
 
   return {
     source,

@@ -23,7 +23,11 @@ import {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const PAGE_SIZE = 100;
-const MAX_PAGES = 50;
+// CustomerVisits default order is id ASC, so we reverse-page from the end.
+// Capped tight: 15 pages × 100 = 1,500 newest walk-ins ≈ 4-5 months at current
+// rate, more than enough to cover the 30-day rescan window. Larger values made
+// the Cloud Run request hang beyond its 5-min budget on first run.
+const MAX_PAGES = 15;
 
 /** Only confirmed showroom walk-ins — "Store Walkin" per CRM `source` field. */
 const WALKIN_VISIT_TYPE = 1;

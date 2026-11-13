@@ -128,18 +128,27 @@ function googleErrorMessage(body: string): string | undefined {
   }
 }
 
-export function googleConfig(eventType: EventType = "purchase"): GoogleConfig | null {
+export function googleConfig(
+  eventType: EventType = "purchase",
+  actionSource: "website" | "physical_store" = "physical_store"
+): GoogleConfig | null {
   const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
   const conversionActionId =
     eventType === "store_visit"
       ? process.env.GOOGLE_ADS_CONVERSION_ACTION_STORE_VISIT
       : process.env.GOOGLE_ADS_CONVERSION_ACTION_PURCHASE;
   if (!customerId || !conversionActionId) return null;
-  // Safe default on both flags: only an explicit "false" sends real events.
-  const validateOnly =
-    eventType === "store_visit"
-      ? process.env.GOOGLE_STORE_VISIT_VALIDATE_ONLY !== "false"
-      : process.env.GOOGLE_VALIDATE_ONLY !== "false";
+  // Safe default on all three flags: only an explicit "false" sends real events.
+  // Website Purchase has its own flag so we can stage it in validate-only mode
+  // without touching store sales (which are already live).
+  let validateOnly: boolean;
+  if (eventType === "store_visit") {
+    validateOnly = process.env.GOOGLE_STORE_VISIT_VALIDATE_ONLY !== "false";
+  } else if (actionSource === "website") {
+    validateOnly = process.env.GOOGLE_WEBSITE_VALIDATE_ONLY !== "false";
+  } else {
+    validateOnly = process.env.GOOGLE_VALIDATE_ONLY !== "false";
+  }
   return {
     customerId,
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/-/g, "") || undefined,
@@ -158,7 +167,7 @@ export function googleConfig(eventType: EventType = "purchase"): GoogleConfig | 
  */
 export async function sendToGoogle(log: ConversionLog): Promise<SendResult> {
   const eventType = log.event_type ?? "purchase";
-  const cfg = googleConfig(eventType);
+  const cfg = googleConfig(eventType, log.action_source);
   if (!cfg) return { ok: false, status: 0, body: "", error: "google_not_configured" };
 
   const preflight = googlePreflightError(log);
