@@ -1,5 +1,5 @@
 import { GoogleAuth } from "google-auth-library";
-import type { ConsentState, ConversionLog } from "../lib/firestore.js";
+import type { ConsentState, ConversionLog, EventType } from "../lib/firestore.js";
 import type { SendResult } from "./types.js";
 
 export const INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest";
@@ -53,12 +53,15 @@ export interface GoogleConfig {
   validateOnly: boolean;
 }
 
-/** Full events:ingest request body for one Purchase. */
+/** Full events:ingest request body for one Purchase or Store Visit. */
 export function buildGooglePayload(log: ConversionLog, cfg: GoogleConfig) {
   const userIdentifiers = buildGoogleUserIdentifiers(log);
   const adIdentifiers = buildGoogleAdIdentifiers(log);
   const adUserData = consentStatus(log.consent?.ad_user_data);
   const adPersonalization = consentStatus(log.consent?.ad_personalization);
+  // Store Visit action is configured as "no value" — always send 0 for those.
+  const isStoreVisit = (log.event_type ?? "purchase") === "store_visit";
+  const conversionValue = isStoreVisit ? 0 : log.order_amount;
 
   return {
     destinations: [
@@ -77,7 +80,7 @@ export function buildGooglePayload(log: ConversionLog, cfg: GoogleConfig) {
         transactionId: log.order_id,
         eventTimestamp: log.event_time.toDate().toISOString(),
         eventSource: log.action_source === "physical_store" ? "IN_STORE" : "WEB",
-        conversionValue: log.order_amount,
+        conversionValue,
         currency: log.currency.toUpperCase(),
         ...(adIdentifiers ? { adIdentifiers } : {}),
         ...(userIdentifiers.length > 0 ? { userData: { userIdentifiers } } : {}),
@@ -125,27 +128,37 @@ function googleErrorMessage(body: string): string | undefined {
   }
 }
 
-export function googleConfig(): GoogleConfig | null {
+export function googleConfig(eventType: EventType = "purchase"): GoogleConfig | null {
   const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
-  const conversionActionId = process.env.GOOGLE_ADS_CONVERSION_ACTION_PURCHASE;
+  const conversionActionId =
+    eventType === "store_visit"
+      ? process.env.GOOGLE_ADS_CONVERSION_ACTION_STORE_VISIT
+      : process.env.GOOGLE_ADS_CONVERSION_ACTION_PURCHASE;
   if (!customerId || !conversionActionId) return null;
+  // Safe default on both flags: only an explicit "false" sends real events.
+  const validateOnly =
+    eventType === "store_visit"
+      ? process.env.GOOGLE_STORE_VISIT_VALIDATE_ONLY !== "false"
+      : process.env.GOOGLE_VALIDATE_ONLY !== "false";
   return {
     customerId,
     loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/-/g, "") || undefined,
     conversionActionId,
-    // Safe default: only an explicit "false" sends real conversions.
-    validateOnly: process.env.GOOGLE_VALIDATE_ONLY !== "false",
+    validateOnly,
   };
 }
 
 /**
- * Send a Purchase event to Google Ads through the Data Manager API.
- * With GOOGLE_VALIDATE_ONLY on, Google only checks the request; a pass comes
- * back as `validated` (not `ok`) so the sale is still sent once live.
- * Returns a structured result; errors do not throw.
+ * Send one event (Purchase or Store Visit) to Google Ads through the Data
+ * Manager API. The event type comes from the log row and picks which
+ * Conversion Action we route to (via googleConfig). With validateOnly on,
+ * Google only checks the request; a pass comes back as `validated` (not `ok`)
+ * so the event is still sent once live. Returns a structured result; errors
+ * do not throw.
  */
-export async function sendPurchaseToGoogle(log: ConversionLog): Promise<SendResult> {
-  const cfg = googleConfig();
+export async function sendToGoogle(log: ConversionLog): Promise<SendResult> {
+  const eventType = log.event_type ?? "purchase";
+  const cfg = googleConfig(eventType);
   if (!cfg) return { ok: false, status: 0, body: "", error: "google_not_configured" };
 
   const preflight = googlePreflightError(log);
@@ -178,3 +191,6 @@ export async function sendPurchaseToGoogle(log: ConversionLog): Promise<SendResu
     };
   }
 }
+
+/** Back-compat alias for Purchase sends (used by google-validate script). */
+export const sendPurchaseToGoogle = sendToGoogle;

@@ -3,7 +3,7 @@ import {
   updateConversionSender,
 } from "../lib/firestore.js";
 import { sendPurchaseToMeta } from "./meta.js";
-import { sendPurchaseToGoogle } from "./google.js";
+import { sendToGoogle } from "./google.js";
 import { toSenderResult } from "./retry-policy.js";
 
 export type Sender = "meta_capi" | "google_ads";
@@ -23,7 +23,11 @@ export async function dispatchConversion(orderId: string, only?: Sender): Promis
 
   const tasks: Promise<void>[] = [];
 
-  if (log.meta_capi?.status !== "success" && (!only || only === "meta_capi")) {
+  const isStoreVisit = log.event_type === "store_visit";
+
+  // Store Visit events go to Google Ads only — Meta has no equivalent and the
+  // store sale already fires the Meta Purchase pixel.
+  if (!isStoreVisit && log.meta_capi?.status !== "success" && (!only || only === "meta_capi")) {
     const attempts = (log.meta_capi?.retries ?? 0) + 1;
     tasks.push(
       sendPurchaseToMeta(log).then((res) =>
@@ -35,7 +39,7 @@ export async function dispatchConversion(orderId: string, only?: Sender): Promis
   if (log.google_ads?.status !== "success" && (!only || only === "google_ads")) {
     const attempts = (log.google_ads?.retries ?? 0) + 1;
     tasks.push(
-      sendPurchaseToGoogle(log).then((res) =>
+      sendToGoogle(log).then((res) =>
         updateConversionSender(orderId, "google_ads", toSenderResult(res, attempts))
       )
     );

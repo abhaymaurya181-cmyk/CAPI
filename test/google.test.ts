@@ -54,6 +54,11 @@ test("payload: in-store event with transactionId, RFC 3339 time, value + currenc
   assert.equal(e.conversionValue, 45999);
   assert.equal(e.currency, "INR");
   assert.equal(buildGooglePayload(log({ action_source: "website" }), cfg).events[0].eventSource, "WEB");
+  // Store Visit events always send conversionValue 0 regardless of order_amount.
+  assert.equal(
+    buildGooglePayload(log({ event_type: "store_visit", order_amount: 42 }), cfg).events[0].conversionValue,
+    0
+  );
 });
 
 test("user identifiers: Google-format hashes, address only when complete", () => {

@@ -28,7 +28,8 @@ test("planSecrets: half-configured integration → warning naming what's missing
 
 test("planSecrets: optional manager id is never a warning on its own", () => {
   const all = ["LUCIRA_CREDS_CAPI", "INTERNAL_TOKEN", ...ORNA, "META_PIXEL_ID", "META_CAPI_ACCESS_TOKEN",
-    "GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CONVERSION_ACTION_PURCHASE"];
+    "GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CONVERSION_ACTION_PURCHASE",
+    "GOOGLE_ADS_CONVERSION_ACTION_STORE_VISIT"];
   const p = d.planSecrets(new Set(all));
   assert.deepEqual(p.warnings, []);
   assert.deepEqual(p.missing, ["GOOGLE_ADS_LOGIN_CUSTOMER_ID"]);

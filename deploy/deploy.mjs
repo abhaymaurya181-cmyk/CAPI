@@ -47,14 +47,21 @@ export const REQUIRED_SECRETS = ["LUCIRA_CREDS_CAPI", "INTERNAL_TOKEN"];
 export const SECRET_GROUPS = {
   OrnaVerse: ["ORNAVERSE_API_BASE", "ORNAVERSE_CLIENT_ID", "ORNAVERSE_CLIENT_SECRET"],
   Meta: ["META_PIXEL_ID", "META_CAPI_ACCESS_TOKEN"],
-  Google: ["GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CONVERSION_ACTION_PURCHASE"],
+  Google: [
+    "GOOGLE_ADS_CUSTOMER_ID",
+    "GOOGLE_ADS_CONVERSION_ACTION_PURCHASE",
+    "GOOGLE_ADS_CONVERSION_ACTION_STORE_VISIT",
+  ],
   // Only if the Google Ads account sits under a manager (MCC) account.
   GoogleManager: ["GOOGLE_ADS_LOGIN_CUSTOMER_ID"],
 };
 
 /** Non-secret settings and their production defaults (env var overrides). */
 export const SETTINGS = {
-  GOOGLE_VALIDATE_ONLY: "false", // live: real conversions reach Google Ads reports
+  GOOGLE_VALIDATE_ONLY: "false", // live: real Purchase conversions reach Google Ads
+  // Store Visit is ramped up separately and starts in validate-only so the
+  // first sync can be inspected without hitting Google Ads for real.
+  GOOGLE_STORE_VISIT_VALIDATE_ONLY: "true",
   ORNAVERSE_SCOPE: "openid",
   ORNAVERSE_POSTED_STATUSES: "1", // 1 = posted; returns (2) are never imported
   ORNAVERSE_INITIAL_LOOKBACK_DAYS: "7",
@@ -91,6 +98,20 @@ export const JOBS = [
     path: "/internal/sync-online-rescan",
     scheduleEnv: "RESCAN_ONLINE_SCHEDULE",
     schedule: "45 3 * * *",
+  },
+  // CRM customer walk-in visits (store foot-fall). Separate lock, staggered
+  // off POS and marketplace so all three can run in parallel hourly.
+  {
+    suffix: "sync-visits",
+    path: "/internal/sync-visits",
+    scheduleEnv: "SYNC_VISITS_SCHEDULE",
+    schedule: "30 * * * *",
+  },
+  {
+    suffix: "sync-visits-rescan",
+    path: "/internal/sync-visits-rescan",
+    scheduleEnv: "RESCAN_VISITS_SCHEDULE",
+    schedule: "0 4 * * *",
   },
 ];
 

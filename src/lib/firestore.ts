@@ -118,7 +118,14 @@ export interface Visitor {
   consent?: VisitorConsent;
 }
 
-export type ConversionSource = "ornaverse_offline" | "ornaverse_marketplace" | "csv_upload";
+export type ConversionSource =
+  | "ornaverse_offline"
+  | "ornaverse_marketplace"
+  | "ornaverse_visits"
+  | "csv_upload";
+
+/** What kind of event this log row represents. Undefined = purchase (legacy rows). */
+export type EventType = "purchase" | "store_visit";
 // pending: not tried yet. retrying: failed, another attempt is scheduled.
 // failed: no more automatic attempts (permanent error or retries used up).
 // validated: Google validateOnly passed, nothing sent.
@@ -154,6 +161,8 @@ export interface MatchInfo {
 
 export interface ConversionLog {
   source: ConversionSource;
+  /** Undefined ≈ "purchase" for legacy rows written before the store-visit event existed. */
+  event_type?: EventType;
   order_id: string;
   order_amount: number;
   currency: string;

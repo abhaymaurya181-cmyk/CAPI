@@ -107,6 +107,19 @@ test("buildConversion: no visitor → hashes only, no clicks", () => {
   assert.ok(c.phone_meta);
 });
 
+test("buildConversion: event_type=store_visit → Google-only, no Meta sender", () => {
+  const c = buildConversion(sale, "ornaverse_visits", visitor(), {
+    mode: "last",
+    windowMs: WINDOW,
+    nowMs: SALE,
+    event_type: "store_visit",
+  });
+  assert.equal(c.event_type, "store_visit");
+  assert.equal(c.action_source, "physical_store");
+  assert.equal(c.meta_capi, undefined, "store visits have no Meta equivalent");
+  assert.equal(c.google_ads?.status, "pending");
+});
+
 test("buildConversion: action_source=website → no sender records (show-only)", () => {
   const c = buildConversion(sale, "ornaverse_marketplace", visitor(), {
     mode: "last",

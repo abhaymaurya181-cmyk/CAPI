@@ -6,6 +6,7 @@ import {
   type ClickPair,
   type ConversionLog,
   type ConversionSource,
+  type EventType,
   type MatchInfo,
   type Visitor,
   type VisitorMatch,
@@ -128,6 +129,7 @@ export function buildConversion(
     nowMs?: number;
     syncRunId?: string;
     action_source?: "website" | "physical_store";
+    event_type?: EventType;
   } = {}
 ): Omit<ConversionLog, "created_at" | "updated_at"> {
   const mode = opts.mode ?? clickMode();
@@ -166,9 +168,15 @@ export function buildConversion(
   // sender records off entirely; the dispatcher skips them too.
   const action_source: "website" | "physical_store" = opts.action_source ?? "physical_store";
   const showOnly = action_source === "website";
+  const event_type = opts.event_type ?? "purchase";
+  // Store Visit events go to Google only; Meta has no equivalent event and
+  // sending a Purchase CAPI with 0 value would skew the pixel.
+  const skipMeta = showOnly || event_type === "store_visit";
+  const skipGoogle = showOnly;
 
   return {
     source,
+    event_type,
     order_id: sale.sale_id,
     order_amount: sale.amount,
     currency: sale.currency,
@@ -205,9 +213,8 @@ export function buildConversion(
     client_ip_address: visitor?.client_ip_address,
     client_user_agent: visitor?.client_user_agent,
     action_source,
-    ...(showOnly
-      ? {}
-      : { meta_capi: pendingSender(opts.nowMs), google_ads: pendingSender(opts.nowMs) }),
+    ...(skipMeta ? {} : { meta_capi: pendingSender(opts.nowMs) }),
+    ...(skipGoogle ? {} : { google_ads: pendingSender(opts.nowMs) }),
   };
 }
 
@@ -226,7 +233,8 @@ export async function ingestSale(
   sale: SaleInput,
   source: ConversionSource,
   syncRunId?: string,
-  action_source: "website" | "physical_store" = "physical_store"
+  action_source: "website" | "physical_store" = "physical_store",
+  event_type: EventType = "purchase"
 ): Promise<IngestOutcome> {
   if (!sale.phone && !sale.email) return { kind: "invalid", error: "no_identifier" };
   if (Number.isNaN(sale.event_time.getTime())) return { kind: "invalid", error: "bad_event_time" };
@@ -249,7 +257,7 @@ export async function ingestSale(
   const windowMs = clickWindowMs();
   const match = combineCandidates(candidates, mode, sale.event_time.getTime(), windowMs);
 
-  const row = buildConversion(sale, source, match, { syncRunId, mode, windowMs, action_source });
+  const row = buildConversion(sale, source, match, { syncRunId, mode, windowMs, action_source, event_type });
   if (existing?.meta_capi?.status === "success") row.meta_capi = existing.meta_capi;
   if (existing?.google_ads?.status === "success") row.google_ads = existing.google_ads;
 

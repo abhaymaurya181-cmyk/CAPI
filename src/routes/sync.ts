@@ -6,6 +6,8 @@ import {
   runOrnaverseMarketplaceSync,
   runOrnaverseRescan,
   runOrnaverseSync,
+  runOrnaverseVisitsRescan,
+  runOrnaverseVisitsSync,
 } from "../lib/sync.js";
 import { requeueStuck } from "../lib/requeue.js";
 
@@ -81,6 +83,31 @@ export default async function syncRoute(app: FastifyInstance): Promise<void> {
   app.post("/admin/api/sync-online", async (req, reply) => {
     if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const run = await runOrnaverseMarketplaceSync("manual");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // Cloud Scheduler: CRM customer visits (store walk-ins) hourly pull.
+  app.post("/internal/sync-visits", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaverseVisitsSync("schedule");
+    req.log.info({ run: run.id, status: run.status, error: run.error }, "visits sync complete");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // Cloud Scheduler, daily: visits re-scan.
+  app.post("/internal/sync-visits-rescan", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaverseVisitsRescan();
+    req.log.info(
+      { run: run.id, status: run.status, error: run.error, new: run.processed, existing: run.skipped_duplicate },
+      "visits rescan complete"
+    );
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  app.post("/admin/api/sync-visits", async (req, reply) => {
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
+    const run = await runOrnaverseVisitsSync("manual");
     return reply.send(serializeRun(run.id, run));
   });
 
