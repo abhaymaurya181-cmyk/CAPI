@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Timestamp } from "@google-cloud/firestore";
 import {
+  attributeOrders,
   channelOf,
   istDay,
   summarizeAttribution,
@@ -166,4 +167,47 @@ test("summarizeAttribution: empty input returns zeros", () => {
   assert.equal(a.total_orders, 0);
   assert.deepEqual(a.first_click.google, { share: 0, count: 0 });
   assert.deepEqual(a.last_click.direct, { share: 0, count: 0 });
+});
+
+test("attributeOrders: per-order verdict under each model, newest first", () => {
+  const items = [
+    {
+      log: log({ order_id: "a", event_time: at("2026-11-10T06:00:00Z") }),
+      clicks: { first_google_at: T.D1, last_meta_at: T.D4 }, // G first, M last
+    },
+    {
+      log: log({ order_id: "b", event_time: at("2026-11-09T06:00:00Z") }),
+      clicks: undefined, // no clicks
+    },
+    {
+      log: log({ order_id: "c", event_time: at("2026-11-11T06:00:00Z") }),
+      clicks: { first_meta_at: T.D1, last_meta_at: T.D2 }, // pure Meta
+    },
+  ];
+  const out = attributeOrders(items);
+  // Newest first: c, a, b.
+  assert.deepEqual(out.map((o) => o.order_id), ["c", "a", "b"]);
+  const a_row = out.find((o) => o.order_id === "a")!;
+  assert.equal(a_row.first_click, "google");
+  assert.equal(a_row.last_click, "meta");
+  // Linear split: 1 Google touch, 1 Meta touch → 0.5/0.5; dominant = google (tiebreak).
+  assert.equal(a_row.linear, "google");
+  assert.deepEqual(a_row.linear_split, { google: 0.5, meta: 0.5, direct: 0 });
+  const b_row = out.find((o) => o.order_id === "b")!;
+  assert.equal(b_row.first_click, "direct");
+  assert.equal(b_row.last_click, "direct");
+  assert.equal(b_row.linear, "direct");
+  const c_row = out.find((o) => o.order_id === "c")!;
+  assert.equal(c_row.first_click, "meta");
+  assert.equal(c_row.last_click, "meta");
+  assert.equal(c_row.linear, "meta");
+});
+
+test("attributeOrders: respects channel and store filters", () => {
+  const items: Array<{ log: ReturnType<typeof log>; clicks?: AttributionClicks }> = [
+    { log: log({ order_id: "web", action_source: "website" }), clicks: { first_google_at: T.D1 } },
+    { log: log({ order_id: "store", action_source: "physical_store", store_name: "Delhi" }), clicks: { first_meta_at: T.D1 } },
+  ];
+  assert.deepEqual(attributeOrders(items, { channel: "online" }).map((o) => o.order_id), ["web"]);
+  assert.deepEqual(attributeOrders(items, { store: "Delhi" }).map((o) => o.order_id), ["store"]);
 });

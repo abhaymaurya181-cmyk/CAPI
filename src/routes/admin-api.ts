@@ -22,6 +22,7 @@ import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
 import { buildConversion, type SaleInput } from "../lib/matcher.js";
 import { buildMetaPayload, metaPreflightError } from "../senders/meta.js";
 import {
+  attributeOrders,
   summarizeAttribution,
   summarizeConversions,
   type AttributionClicks,
@@ -256,12 +257,14 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
       };
     });
     const attribution = summarizeAttribution(items, filters);
+    const attribution_orders = attributeOrders(items, filters);
 
     return reply.send({
       range: { from: range.from?.toISOString() ?? null, to: range.to?.toISOString() ?? null },
       truncated: snap.size === ANALYTICS_MAX_ROWS,
       ...summary,
       attribution,
+      attribution_orders,
     });
   });
 

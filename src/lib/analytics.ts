@@ -64,6 +64,23 @@ export interface AttributionSummary {
   total_orders: number;
 }
 
+export type AttributedSource = "google" | "meta" | "direct";
+
+/** Per-order attribution under each model, for the orders-detail table. */
+export interface AttributedOrder {
+  order_id: string;
+  event_time_ms: number;
+  store: string;
+  amount: number;
+  currency: string;
+  first_click: AttributedSource;
+  last_click: AttributedSource;
+  /** Dominant source under linear (>50% share). "google" on G↔M tie; "direct" when no clicks. */
+  linear: AttributedSource;
+  /** Full linear split, 0..1 each, sum ≈ 1. */
+  linear_split: { google: number; meta: number; direct: number };
+}
+
 const IST_OFFSET_MS = 5.5 * 3600 * 1000;
 const NO_STORE = "(no store)";
 
@@ -164,6 +181,64 @@ function emptyShare(): { google: number; meta: number; direct: number } {
   return { google: 0, meta: 0, direct: 0 };
 }
 
+/** Attribution outcome for a single conversion under all 3 models. */
+interface OrderAttribution {
+  first_click: AttributedSource;
+  last_click: AttributedSource;
+  linear: AttributedSource;
+  linear_split: { google: number; meta: number; direct: number };
+}
+
+/** Compute every model's verdict on one order. Centralises the attribution rules. */
+function attributeOrder(clicks: AttributionClicks | undefined): OrderAttribution {
+  const fg = clicks?.first_google_at;
+  const lg = clicks?.last_google_at;
+  const fm = clicks?.first_meta_at;
+  const lm = clicks?.last_meta_at;
+
+  // First-click: earliest known touch wins, Google on tie (stable).
+  const firstG = fg ?? lg;
+  const firstM = fm ?? lm;
+  let first_click: AttributedSource;
+  if (firstG == null && firstM == null) first_click = "direct";
+  else if (firstM == null || (firstG != null && firstG <= firstM)) first_click = "google";
+  else first_click = "meta";
+
+  // Last-click: latest known touch wins, Meta on tie (stable).
+  const lastG = lg ?? fg;
+  const lastM = lm ?? fm;
+  let last_click: AttributedSource;
+  if (lastG == null && lastM == null) last_click = "direct";
+  else if (lastG == null || (lastM != null && lastM >= lastG)) last_click = "meta";
+  else last_click = "google";
+
+  // Linear: unique touches (dedupe same-click first=last), split 1/N.
+  const gTouches = new Set<number>();
+  if (fg != null) gTouches.add(fg);
+  if (lg != null) gTouches.add(lg);
+  const mTouches = new Set<number>();
+  if (fm != null) mTouches.add(fm);
+  if (lm != null) mTouches.add(lm);
+  const total = gTouches.size + mTouches.size;
+  const linear_split =
+    total === 0
+      ? { google: 0, meta: 0, direct: 1 }
+      : { google: gTouches.size / total, meta: mTouches.size / total, direct: 0 };
+  let linear: AttributedSource;
+  if (linear_split.direct === 1) linear = "direct";
+  else if (linear_split.google >= linear_split.meta) linear = "google";
+  else linear = "meta";
+
+  return { first_click, last_click, linear, linear_split };
+}
+
+function matchesFilters(log: ConversionLog, filters: AnalyticsFilters): boolean {
+  return (
+    (!filters.channel || channelOf(log) === filters.channel) &&
+    (!filters.store || (log.store_name || NO_STORE) === filters.store)
+  );
+}
+
 /**
  * For each conversion, award 1.0 of credit across platforms per attribution model.
  * First/last-click = winner takes all; linear splits across unique touchpoints.
@@ -174,49 +249,19 @@ export function summarizeAttribution(
   items: Array<{ log: ConversionLog; clicks?: AttributionClicks }>,
   filters: AnalyticsFilters = {}
 ): AttributionSummary {
-  const rows = items.filter(
-    ({ log }) =>
-      (!filters.channel || channelOf(log) === filters.channel) &&
-      (!filters.store || (log.store_name || NO_STORE) === filters.store)
-  );
+  const rows = items.filter((it) => matchesFilters(it.log, filters));
 
   const first_click = emptyShare();
   const last_click = emptyShare();
   const linear = emptyShare();
 
   for (const { clicks } of rows) {
-    const fg = clicks?.first_google_at;
-    const lg = clicks?.last_google_at;
-    const fm = clicks?.first_meta_at;
-    const lm = clicks?.last_meta_at;
-
-    // First-click: earliest known touch wins, Google tiebreak (stable).
-    const firstG = fg ?? lg;
-    const firstM = fm ?? lm;
-    if (firstG == null && firstM == null) first_click.direct++;
-    else if (firstM == null || (firstG != null && firstG <= firstM)) first_click.google++;
-    else first_click.meta++;
-
-    // Last-click: latest known touch wins, Meta tiebreak (stable).
-    const lastG = lg ?? fg;
-    const lastM = lm ?? fm;
-    if (lastG == null && lastM == null) last_click.direct++;
-    else if (lastG == null || (lastM != null && lastM >= lastG)) last_click.meta++;
-    else last_click.google++;
-
-    // Linear: unique touches (dedupe same-click first=last), split 1/N.
-    const gTouches = new Set<number>();
-    if (fg != null) gTouches.add(fg);
-    if (lg != null) gTouches.add(lg);
-    const mTouches = new Set<number>();
-    if (fm != null) mTouches.add(fm);
-    if (lm != null) mTouches.add(lm);
-    const total = gTouches.size + mTouches.size;
-    if (total === 0) linear.direct++;
-    else {
-      linear.google += gTouches.size / total;
-      linear.meta += mTouches.size / total;
-    }
+    const a = attributeOrder(clicks);
+    first_click[a.first_click]++;
+    last_click[a.last_click]++;
+    linear.google += a.linear_split.google;
+    linear.meta += a.linear_split.meta;
+    linear.direct += a.linear_split.direct;
   }
 
   const cell = (count: number): AttributionCell => ({
@@ -235,4 +280,32 @@ export function summarizeAttribution(
     linear: normalize(linear),
     total_orders: rows.length,
   };
+}
+
+/** Per-order attribution for the detail table under the attribution summary. */
+export function attributeOrders(
+  items: Array<{ log: ConversionLog; clicks?: AttributionClicks }>,
+  filters: AnalyticsFilters = {}
+): AttributedOrder[] {
+  return items
+    .filter((it) => matchesFilters(it.log, filters))
+    .map(({ log, clicks }) => {
+      const a = attributeOrder(clicks);
+      return {
+        order_id: log.order_id,
+        event_time_ms: log.event_time.toMillis(),
+        store: log.store_name || NO_STORE,
+        amount: Number(log.order_amount) || 0,
+        currency: log.currency,
+        first_click: a.first_click,
+        last_click: a.last_click,
+        linear: a.linear,
+        linear_split: {
+          google: round2(a.linear_split.google),
+          meta: round2(a.linear_split.meta),
+          direct: round2(a.linear_split.direct),
+        },
+      };
+    })
+    .sort((a, b) => b.event_time_ms - a.event_time_ms);
 }

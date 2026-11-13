@@ -944,6 +944,37 @@
     .attribution-table .num { font-variant-numeric: tabular-nums; }
     .attribution-table .attr-pct { font-weight: 600; }
     .attribution-table .attr-count { color: var(--muted); font-size: 12px; margin-left: 6px; }
+    .attribution-table tbody tr {
+      cursor: pointer;
+      transition: background-color 0.1s;
+    }
+    .attribution-table tbody tr:hover { background: var(--muted-bg, #f7f7f9); }
+    .attribution-table tbody tr.active {
+      background: var(--brand-soft, #eef2ff);
+      box-shadow: inset 3px 0 0 var(--brand);
+    }
+    .attribution-table tbody tr.active td:first-child { font-weight: 700; color: var(--brand); }
+    .attribution-orders-section { margin-top: 24px; }
+    .attribution-orders-section .orders-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 8px; gap: 12px; flex-wrap: wrap;
+    }
+    .attribution-orders-section h3 {
+      font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--brand); margin: 0;
+    }
+    .attribution-orders-section .orders-controls {
+      display: flex; gap: 12px; align-items: center;
+    }
+    .src-tag {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .src-tag.google { background: #e6f4ea; color: #137333; }
+    .src-tag.meta   { background: #e6eefc; color: #2a5bb8; }
+    .src-tag.direct { background: #f1f3f4; color: #5f6368; }
+    .src-tag-split { color: var(--muted); font-size: 11px; margin-left: 6px; }
     .bar {
       display: inline-block; height: 8px; border-radius: 4px;
       background: var(--accent); vertical-align: middle; margin-right: 8px;
@@ -1121,7 +1152,7 @@
           <div class="attribution-section">
             <h3>Attribution — share of orders by source</h3>
             <div class="attribution-note muted">
-              Last-click (non-direct) matches last-click here — we only log ad clicks, not direct visits, so there is nothing to skip. Counts respect the same click-through window as "With ad click" above.
+              Click a row to drill into the orders below. Last-click (non-direct) matches last-click here — we only log ad clicks, not direct visits, so there is nothing to skip. Counts respect the same click-through window as "With ad click" above.
             </div>
             <div class="attribution-wrap">
               <table class="data-table attribution-table">
@@ -1134,6 +1165,36 @@
                   </tr>
                 </thead>
                 <tbody id="analytics-attribution"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="attribution-orders-section">
+            <div class="orders-header">
+              <h3 id="attribution-orders-title">Orders — First click attribution</h3>
+              <div class="orders-controls">
+                <label class="muted" style="font-size:12px;">Show
+                  <select id="attribution-source-filter" style="margin-left:6px;">
+                    <option value="">All sources</option>
+                    <option value="google">Google only</option>
+                    <option value="meta">Meta only</option>
+                    <option value="direct">Direct only</option>
+                  </select>
+                </label>
+                <span class="muted" id="attribution-orders-count" style="font-size:12px;"></span>
+              </div>
+            </div>
+            <div class="table-wrap" style="max-height: 480px;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Order ID</th>
+                    <th>Store</th>
+                    <th class="num">Amount</th>
+                    <th>Attributed to</th>
+                  </tr>
+                </thead>
+                <tbody id="attribution-orders-body"></tbody>
               </table>
             </div>
           </div>
@@ -1919,6 +1980,57 @@
 
     const pct = (r) => `${Math.round((r || 0) * 100)}%`;
 
+    // Which attribution model is active for the orders drill-down, and the
+    // last response's per-order attribution rows. Reset when the tab loads
+    // but preserved across refresh of the Analytics request.
+    const ATTRIBUTION_LABELS = {
+      first_click: "First click",
+      last_click: "Last click (non-direct)",
+      linear: "Linear",
+    };
+    const attributionState = { model: "first_click", source: "", orders: [] };
+
+    function srcTag(src, split) {
+      const label = src === "google" ? "Google" : src === "meta" ? "Meta" : "Direct";
+      let extra = "";
+      if (attributionState.model === "linear" && split && (split.google > 0 || split.meta > 0)) {
+        const g = Math.round(split.google * 100);
+        const m = Math.round(split.meta * 100);
+        if (g > 0 && m > 0) extra = `<span class="src-tag-split">G ${g}% / M ${m}%</span>`;
+      }
+      return `<span class="src-tag ${src}">${label}</span>${extra}`;
+    }
+
+    function renderAttributionOrders() {
+      const model = attributionState.model;
+      const filter = attributionState.source;
+      $("#attribution-orders-title").textContent = `Orders — ${ATTRIBUTION_LABELS[model]} attribution`;
+      const all = attributionState.orders || [];
+      const rows = filter ? all.filter((o) => o[model] === filter) : all;
+      $("#attribution-orders-count").textContent = `${rows.length} of ${all.length} orders`;
+      const body = $("#attribution-orders-body");
+      if (!rows.length) {
+        body.innerHTML = `<tr><td colspan="5" class="muted center">No orders match this filter.</td></tr>`;
+        return;
+      }
+      body.innerHTML = rows
+        .map((o) => {
+          const date = new Date(o.event_time_ms).toLocaleString(undefined, {
+            day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+          });
+          const money = o.currency === "INR" ? fmtMoney(o.amount) : `${o.amount.toLocaleString()} ${esc(o.currency)}`;
+          return `
+            <tr class="row-main" data-key="${esc(o.order_id)}">
+              <td>${esc(date)}</td>
+              <td><code>${esc(o.order_id)}</code></td>
+              <td>${esc(o.store)}</td>
+              <td class="num">${money}</td>
+              <td>${srcTag(o[model], o.linear_split)}</td>
+            </tr>`;
+        })
+        .join("");
+    }
+
     function kpi(label, value, sub) {
       return `
         <div class="kpi">
@@ -2025,8 +2137,9 @@
         const fmtCount = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
         const attrCell = (c) =>
           `<td class="num"><span class="attr-pct">${pct(c.share)}</span><span class="attr-count">(${fmtCount(c.count)})</span></td>`;
-        const attrRow = (label, m) => `
-          <tr>
+        const activeModel = attributionState.model;
+        const attrRow = (modelKey, label, m) => `
+          <tr data-model="${modelKey}" class="${modelKey === activeModel ? "active" : ""}">
             <td>${label}</td>
             ${attrCell(m.google)}
             ${attrCell(m.meta)}
@@ -2034,11 +2147,14 @@
           </tr>`;
         $("#analytics-attribution").innerHTML = attr && attr.total_orders
           ? [
-              attrRow("First click", attr.first_click),
-              attrRow("Last click (non-direct)", attr.last_click),
-              attrRow("Linear", attr.linear),
+              attrRow("first_click", "First click", attr.first_click),
+              attrRow("last_click", "Last click (non-direct)", attr.last_click),
+              attrRow("linear", "Linear", attr.linear),
             ].join("")
           : `<tr><td colspan="4" class="muted center">No sales in this range.</td></tr>`;
+
+        attributionState.orders = a.attribution_orders || [];
+        renderAttributionOrders();
       } catch (err) {
         msg.classList.add("err");
         msg.textContent = "Failed to load: " + err.message;
@@ -2053,8 +2169,24 @@
     $("#analytics-channel").addEventListener("change", loadAnalytics);
     $("#analytics-store").addEventListener("change", loadAnalytics);
     $("#analytics-refresh").addEventListener("click", loadAnalytics);
+
+    // Attribution model picker — click a row in the attribution table to drill
+    // the orders table below. No re-fetch; the per-order data is already in state.
+    $("#analytics-attribution").addEventListener("click", (e) => {
+      const tr = e.target.closest("tr[data-model]");
+      if (!tr) return;
+      attributionState.model = tr.dataset.model;
+      $("#analytics-attribution").querySelectorAll("tr").forEach((r) => r.classList.toggle("active", r === tr));
+      renderAttributionOrders();
+    });
+    $("#attribution-source-filter").addEventListener("change", (e) => {
+      attributionState.source = e.target.value;
+      renderAttributionOrders();
+    });
+
     wireExpand("#visitors-body", 6, (key) => Promise.resolve(renderVisitorExpansion(key)));
     wireExpand("#conversions-body", 9, (orderId) => renderConversionExpansion(orderId));
+    wireExpand("#attribution-orders-body", 5, (orderId) => renderConversionExpansion(orderId));
     wireExpand("#sync-body", 11, (id) => Promise.resolve(renderSyncExpansion(id)));
 
     $("#visitors-search").addEventListener("input", debounce(loadVisitors, 350));
