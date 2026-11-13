@@ -159,10 +159,21 @@ export interface MatchInfo {
   google_click_at?: Timestamp;
 }
 
+export interface ConversionItem {
+  type_name?: string;
+  metal_name?: string;
+  karat_name?: string;
+  item_name?: string;
+  pieces?: number;
+  amount?: number;
+}
+
 export interface ConversionLog {
   source: ConversionSource;
   /** Undefined ≈ "purchase" for legacy rows written before the store-visit event existed. */
   event_type?: EventType;
+  /** Display-only line items (OrnaVerse Order Retrieve). Never sent to ad platforms. */
+  items?: ConversionItem[];
   order_id: string;
   order_amount: number;
   currency: string;

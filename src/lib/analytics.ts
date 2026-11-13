@@ -1,4 +1,4 @@
-import type { ConversionLog, SendStatus } from "./firestore.js";
+import type { ConversionItem, ConversionLog, SendStatus } from "./firestore.js";
 
 /**
  * Admin analytics: totals, status counts and breakdowns over the conversions
@@ -327,6 +327,130 @@ export function summarizeVisitorAttribution(
     last_click: normalize(last_click),
     linear: normalize(linear),
     total_visitors: n,
+  };
+}
+
+export interface FunnelStage {
+  count: number;
+  /** Fraction of the previous stage that reached this one (0..1). 1 for stage 1. */
+  rate_from_prev: number;
+  /** Fraction of stage 1 that reached this one (0..1). */
+  rate_from_top: number;
+}
+
+/** One buyer who completed the full Visitor → Store Visit → Buyer journey. */
+export interface FunnelBuyer {
+  visitor_key: string;
+  first_seen_ms: number;
+  store_visit_ms: number;
+  purchase_ms: number;
+  store: string;
+  amount: number;
+  currency: string;
+  items: ConversionItem[];
+  days_visitor_to_store: number;
+  days_store_to_buy: number;
+}
+
+export interface FunnelSummary {
+  visitors: FunnelStage;
+  store_visits: FunnelStage;
+  buyers: FunnelStage;
+  /** Avg days between stages, for buyers who completed the journey. */
+  avg_days_visitor_to_store: number;
+  avg_days_store_to_buy: number;
+  /** Full buyer journeys for the detail table. */
+  buyers_detail: FunnelBuyer[];
+}
+
+interface FunnelVisitor {
+  key: string;
+  first_seen_ms: number;
+}
+
+interface FunnelConversion {
+  log: ConversionLog;
+  event_ms: number;
+  visitor_key: string;
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+
+/**
+ * Strict 3-stage funnel — a person counts at each stage only if they went
+ * through the previous one. "Then" means time order: first_seen → store visit
+ * → purchase, where each later event happens AFTER the earlier one for that
+ * same visitor.
+ */
+export function summarizeFunnel(
+  visitors: FunnelVisitor[],
+  conversions: FunnelConversion[]
+): FunnelSummary {
+  // Group the conversions we care about by visitor_key.
+  const byKey = new Map<string, { visits: number[]; purchases: FunnelConversion[] }>();
+  for (const c of conversions) {
+    if (!c.visitor_key) continue;
+    let g = byKey.get(c.visitor_key);
+    if (!g) {
+      g = { visits: [], purchases: [] };
+      byKey.set(c.visitor_key, g);
+    }
+    if (c.log.event_type === "store_visit") g.visits.push(c.event_ms);
+    else if ((c.log.event_type ?? "purchase") === "purchase") g.purchases.push(c);
+  }
+
+  const visitorCount = visitors.length;
+  let storeVisitCount = 0;
+  let buyerCount = 0;
+  const buyers: FunnelBuyer[] = [];
+  let sumDaysVS = 0;
+  let sumDaysSB = 0;
+
+  for (const v of visitors) {
+    const g = byKey.get(v.key);
+    if (!g) continue;
+    // Earliest store visit AFTER first_seen.
+    const svAfter = g.visits.filter((ms) => ms >= v.first_seen_ms).sort((a, b) => a - b)[0];
+    if (svAfter == null) continue;
+    storeVisitCount++;
+    // Earliest purchase AFTER that store visit.
+    const buy = g.purchases.filter((p) => p.event_ms >= svAfter).sort((a, b) => a.event_ms - b.event_ms)[0];
+    if (!buy) continue;
+    buyerCount++;
+    const dVS = (svAfter - v.first_seen_ms) / DAY_MS;
+    const dSB = (buy.event_ms - svAfter) / DAY_MS;
+    sumDaysVS += dVS;
+    sumDaysSB += dSB;
+    buyers.push({
+      visitor_key: v.key,
+      first_seen_ms: v.first_seen_ms,
+      store_visit_ms: svAfter,
+      purchase_ms: buy.event_ms,
+      store: buy.log.store_name || "",
+      amount: Number(buy.log.order_amount) || 0,
+      currency: buy.log.currency,
+      items: buy.log.items ?? [],
+      days_visitor_to_store: round2(dVS),
+      days_store_to_buy: round2(dSB),
+    });
+  }
+
+  const stage = (count: number, prev: number): FunnelStage => ({
+    count,
+    rate_from_prev: rate(count, prev),
+    rate_from_top: rate(count, visitorCount),
+  });
+
+  // Newest buyers first — most useful for admin scanning.
+  buyers.sort((a, b) => b.purchase_ms - a.purchase_ms);
+
+  return {
+    visitors: stage(visitorCount, visitorCount),
+    store_visits: stage(storeVisitCount, visitorCount),
+    buyers: stage(buyerCount, storeVisitCount),
+    avg_days_visitor_to_store: buyerCount ? round2(sumDaysVS / buyerCount) : 0,
+    avg_days_store_to_buy: buyerCount ? round2(sumDaysSB / buyerCount) : 0,
+    buyers_detail: buyers,
   };
 }
 

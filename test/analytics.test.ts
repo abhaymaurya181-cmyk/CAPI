@@ -7,6 +7,7 @@ import {
   istDay,
   summarizeAttribution,
   summarizeConversions,
+  summarizeFunnel,
   summarizeVisitorAttribution,
   type AttributionClicks,
 } from "../src/lib/analytics.js";
@@ -227,6 +228,87 @@ test("summarizeVisitorAttribution: empty input returns zeros", () => {
   const a = summarizeVisitorAttribution([]);
   assert.equal(a.total_visitors, 0);
   assert.deepEqual(a.first_click.google, { share: 0, count: 0 });
+});
+
+const day = (iso: string) => Date.parse(iso + "T12:00:00Z");
+
+test("summarizeFunnel: strict order — store visit before first_seen is NOT counted", () => {
+  const visitors = [{ key: "v1", first_seen_ms: day("2026-11-01") }];
+  // Store visit happened BEFORE first_seen — must be ignored.
+  const conversions = [
+    {
+      log: log({ event_type: "store_visit" }),
+      event_ms: day("2026-10-15"),
+      visitor_key: "v1",
+    },
+  ];
+  const f = summarizeFunnel(visitors, conversions);
+  assert.equal(f.visitors.count, 1);
+  assert.equal(f.store_visits.count, 0);
+  assert.equal(f.buyers.count, 0);
+});
+
+test("summarizeFunnel: full journey — visitor → store → buy, dates tracked", () => {
+  const visitors = [{ key: "v1", first_seen_ms: day("2026-10-01") }];
+  const conversions = [
+    { log: log({ event_type: "store_visit" }), event_ms: day("2026-10-05"), visitor_key: "v1" },
+    {
+      log: log({
+        event_type: "purchase",
+        order_amount: 50000,
+        store_name: "Borivali",
+        items: [{ type_name: "Rings", metal_name: "Gold", karat_name: "18KT", pieces: 1, amount: 50000 }],
+      }),
+      event_ms: day("2026-10-20"),
+      visitor_key: "v1",
+    },
+  ];
+  const f = summarizeFunnel(visitors, conversions);
+  assert.equal(f.visitors.count, 1);
+  assert.equal(f.store_visits.count, 1);
+  assert.equal(f.buyers.count, 1);
+  assert.equal(f.buyers.rate_from_prev, 1);
+  assert.equal(f.buyers.rate_from_top, 1);
+  assert.equal(f.buyers_detail.length, 1);
+  assert.equal(f.buyers_detail[0].days_visitor_to_store, 4);
+  assert.equal(f.buyers_detail[0].days_store_to_buy, 15);
+  assert.equal(f.buyers_detail[0].store, "Borivali");
+  assert.equal(f.buyers_detail[0].items[0].type_name, "Rings");
+  assert.equal(f.avg_days_visitor_to_store, 4);
+  assert.equal(f.avg_days_store_to_buy, 15);
+});
+
+test("summarizeFunnel: buyer with NO store visit is excluded from strict funnel", () => {
+  const visitors = [{ key: "v1", first_seen_ms: day("2026-10-01") }];
+  const conversions = [
+    // Pure online purchase, no store visit — strict funnel drops it at stage 2.
+    { log: log({ event_type: "purchase" }), event_ms: day("2026-10-10"), visitor_key: "v1" },
+  ];
+  const f = summarizeFunnel(visitors, conversions);
+  assert.equal(f.visitors.count, 1);
+  assert.equal(f.store_visits.count, 0);
+  assert.equal(f.buyers.count, 0);
+});
+
+test("summarizeFunnel: multi-visitor rates", () => {
+  const visitors = [
+    { key: "a", first_seen_ms: day("2026-10-01") },
+    { key: "b", first_seen_ms: day("2026-10-01") },
+    { key: "c", first_seen_ms: day("2026-10-01") },
+    { key: "d", first_seen_ms: day("2026-10-01") },
+  ];
+  const conversions = [
+    { log: log({ event_type: "store_visit" }), event_ms: day("2026-10-05"), visitor_key: "a" },
+    { log: log({ event_type: "store_visit" }), event_ms: day("2026-10-05"), visitor_key: "b" },
+    { log: log({ event_type: "purchase" }), event_ms: day("2026-10-10"), visitor_key: "a" },
+  ];
+  const f = summarizeFunnel(visitors, conversions);
+  assert.equal(f.visitors.count, 4);
+  assert.equal(f.store_visits.count, 2); // a and b
+  assert.equal(f.buyers.count, 1); // only a
+  assert.equal(f.store_visits.rate_from_top, 0.5);
+  assert.equal(f.buyers.rate_from_prev, 0.5);
+  assert.equal(f.buyers.rate_from_top, 0.25);
 });
 
 test("attributeOrders: respects channel and store filters", () => {

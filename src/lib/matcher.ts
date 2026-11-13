@@ -15,6 +15,20 @@ import { hashIdentity, normalizeZipIndia } from "./hash.js";
 import { clickMode, type ClickMode } from "./click-ids.js";
 import { pendingSender } from "../senders/retry-policy.js";
 
+/** One line item on a sale, display-only (admin UI). No PII. */
+export interface SaleItem {
+  /** Category, e.g. "Necklaces", "Earrings", "Rings". */
+  type_name?: string;
+  /** Metal, e.g. "Gold", "Platinum". */
+  metal_name?: string;
+  /** Karat, e.g. "14KT", "18KT". */
+  karat_name?: string;
+  /** Internal item name / SKU line, e.g. "Customer Order CON291". */
+  item_name?: string;
+  pieces?: number;
+  amount?: number;
+}
+
 /** One offline sale, as any importer (CSV, OrnaVerse) hands it over. */
 export interface SaleInput {
   sale_id: string;
@@ -30,6 +44,8 @@ export interface SaleInput {
   state?: string;
   country?: string;
   store_name?: string;
+  /** Line items for admin display; never sent to Meta / Google. */
+  items?: SaleItem[];
 }
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -175,6 +191,7 @@ export function buildConversion(
   return {
     source,
     event_type,
+    ...(sale.items && sale.items.length ? { items: sale.items } : {}),
     order_id: sale.sale_id,
     order_amount: sale.amount,
     currency: sale.currency,

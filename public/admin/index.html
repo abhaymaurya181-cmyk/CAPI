@@ -975,6 +975,36 @@
     .src-tag.meta   { background: #e6eefc; color: #2a5bb8; }
     .src-tag.direct { background: #f1f3f4; color: #5f6368; }
     .src-tag-split { color: var(--muted); font-size: 11px; margin-left: 6px; }
+    .funnel-bars-section { margin-top: 24px; max-width: 820px; }
+    .funnel-bars-section h3 {
+      font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--brand); margin: 0 0 12px;
+    }
+    .funnel-row {
+      display: flex; align-items: center; gap: 14px;
+      margin-bottom: 10px; font-variant-numeric: tabular-nums;
+    }
+    .funnel-row-label {
+      width: 140px; font-weight: 600; font-size: 13px;
+    }
+    .funnel-row-bar-wrap {
+      flex: 1; background: #f1f3f4; border-radius: 6px; height: 28px; overflow: hidden;
+      position: relative;
+    }
+    .funnel-row-bar {
+      background: linear-gradient(90deg, var(--brand, #5a4a8a), #8a73c4);
+      height: 100%; border-radius: 6px; transition: width 0.3s ease;
+    }
+    .funnel-row-count {
+      min-width: 70px; text-align: right; font-weight: 700; font-size: 15px;
+    }
+    .funnel-row-rate {
+      min-width: 120px; text-align: right;
+      color: var(--muted); font-size: 12px;
+    }
+    .items-summary { font-size: 12px; line-height: 1.4; }
+    .items-summary .item-line { color: var(--muted); }
+    .items-summary .item-line strong { color: inherit; font-weight: 600; }
     .bar {
       display: inline-block; height: 8px; border-radius: 4px;
       background: var(--accent); vertical-align: middle; margin-right: 8px;
@@ -1033,6 +1063,7 @@
           <button data-tab="conversions">Conversions</button>
           <button data-tab="analytics">Analytics</button>
           <button data-tab="visitor-analytics">Visitor Analytics</button>
+          <button data-tab="funnel">Funnel</button>
         </nav>
       </aside>
       <main>
@@ -1277,6 +1308,51 @@
           </div>
         </section>
 
+        <section id="tab-funnel" class="tab hidden">
+          <div class="page-header">
+            <h2>Funnel</h2>
+            <div class="muted">Visitor → Store Visit → Buyer. Each stage requires the previous (in time order).</div>
+          </div>
+          <div class="toolbar">
+            <select id="funnel-range">
+              <option value="30d">Last 30 days</option>
+              <option value="90d" selected>Last 90 days</option>
+              <option value="all">All time</option>
+              <option value="custom">Custom range…</option>
+            </select>
+            <input type="date" id="funnel-from" class="hidden" />
+            <input type="date" id="funnel-to" class="hidden" />
+            <button class="btn-ghost" id="funnel-refresh" type="button">Refresh</button>
+            <span class="toolbar-msg" id="funnel-msg"></span>
+          </div>
+          <div class="kpi-grid" id="funnel-kpis"></div>
+          <div class="funnel-bars-section">
+            <h3>Journey</h3>
+            <div id="funnel-bars"></div>
+          </div>
+          <div class="attribution-orders-section">
+            <div class="orders-header">
+              <h3>Buyer details</h3>
+              <span class="muted" id="funnel-buyers-count" style="font-size:12px;"></span>
+            </div>
+            <div class="table-wrap" style="max-height: 540px;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Purchase date</th>
+                    <th>Store</th>
+                    <th>First visit → Store</th>
+                    <th>Store → Buy</th>
+                    <th>Items</th>
+                    <th class="num">Amount</th>
+                  </tr>
+                </thead>
+                <tbody id="funnel-buyers-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         <section id="tab-sync" class="tab hidden">
           <div class="page-header">
             <h2>Sync log</h2>
@@ -1439,6 +1515,7 @@
         if (tab === "conversions") loadConversions();
         if (tab === "analytics") loadAnalytics();
         if (tab === "visitor-analytics") loadVisitorAnalytics();
+        if (tab === "funnel") loadFunnel();
         if (tab === "sync") loadSync();
       });
     });
@@ -1524,6 +1601,7 @@
         if (prefix === "visitors") loadVisitors();
         else if (prefix === "analytics") loadAnalytics();
         else if (prefix === "visitor-analytics") loadVisitorAnalytics();
+        else if (prefix === "funnel") loadFunnel();
         else loadConversions();
       }
     }
@@ -2240,13 +2318,104 @@
       }
     }
 
+    // ---- Funnel page ----
+
+    function fmtDate(ms) {
+      return new Date(ms).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+    }
+
+    function renderItems(items) {
+      if (!items || !items.length) return `<span class="muted">—</span>`;
+      const lines = items.map((it) => {
+        const parts = [];
+        if (it.type_name) parts.push(`<strong>${esc(it.type_name)}</strong>`);
+        const sub = [it.karat_name, it.metal_name].filter(Boolean).join(" ");
+        if (sub) parts.push(esc(sub));
+        if (it.pieces && it.pieces !== 1) parts.push(`× ${it.pieces}`);
+        return `<div class="item-line">${parts.join(" ")}</div>`;
+      });
+      return `<div class="items-summary">${lines.join("")}</div>`;
+    }
+
+    function funnelRow(label, stage, maxCount) {
+      const width = maxCount ? Math.max(2, (stage.count / maxCount) * 100) : 2;
+      const rate = stage.rate_from_prev < 1
+        ? `${pct(stage.rate_from_prev)} of previous`
+        : `${stage.count.toLocaleString()} total`;
+      return `
+        <div class="funnel-row">
+          <div class="funnel-row-label">${label}</div>
+          <div class="funnel-row-bar-wrap">
+            <div class="funnel-row-bar" style="width: ${width}%"></div>
+          </div>
+          <div class="funnel-row-count">${stage.count.toLocaleString()}</div>
+          <div class="funnel-row-rate">${stage.count === maxCount ? "" : rate}</div>
+        </div>`;
+    }
+
+    async function loadFunnel() {
+      const msg = $("#funnel-msg");
+      msg.classList.remove("err");
+      msg.textContent = "Loading…";
+      const params = buildRangeQuery("funnel");
+      try {
+        const f = await api("/admin/api/funnel?" + params.toString());
+        const trunc = [];
+        if (f.truncated_visitors) trunc.push("visitors");
+        if (f.truncated_conversions) trunc.push("conversions");
+        msg.textContent = trunc.length ? `Showing the latest 5,000 ${trunc.join(" + ")} only — narrow the range.` : "";
+
+        const overall = f.visitors.count ? f.buyers.count / f.visitors.count : 0;
+        $("#funnel-kpis").innerHTML = [
+          kpi("Visitors", f.visitors.count.toLocaleString()),
+          kpi("Store visits", f.store_visits.count.toLocaleString(),
+            `${pct(f.store_visits.rate_from_top)} of visitors`),
+          kpi("Buyers", f.buyers.count.toLocaleString(),
+            `${pct(f.buyers.rate_from_prev)} of store visitors`),
+          kpi("Visitor → Buyer rate", pct(overall), "overall conversion"),
+          kpi("Avg days: visit → store", f.avg_days_visitor_to_store.toString()),
+          kpi("Avg days: store → buy", f.avg_days_store_to_buy.toString()),
+        ].join("");
+
+        const maxCount = f.visitors.count;
+        $("#funnel-bars").innerHTML = [
+          funnelRow("Visitors", f.visitors, maxCount),
+          funnelRow("Store Visits", f.store_visits, maxCount),
+          funnelRow("Buyers", f.buyers, maxCount),
+        ].join("");
+
+        $("#funnel-buyers-count").textContent = `${f.buyers_detail.length} buyer${f.buyers_detail.length === 1 ? "" : "s"} completed the full journey`;
+        if (f.buyers_detail.length === 0) {
+          $("#funnel-buyers-body").innerHTML = `<tr><td colspan="6" class="muted center">No buyers completed the full funnel in this range.</td></tr>`;
+        } else {
+          $("#funnel-buyers-body").innerHTML = f.buyers_detail.map((b) => {
+            const money = b.currency === "INR" ? fmtMoney(b.amount) : `${b.amount.toLocaleString()} ${esc(b.currency)}`;
+            return `
+              <tr>
+                <td>${fmtDate(b.purchase_ms)}</td>
+                <td>${esc(b.store) || "<span class='muted'>—</span>"}</td>
+                <td>${b.days_visitor_to_store.toFixed(1)} days</td>
+                <td>${b.days_store_to_buy.toFixed(1)} days</td>
+                <td>${renderItems(b.items)}</td>
+                <td class="num">${money}</td>
+              </tr>`;
+          }).join("");
+        }
+      } catch (err) {
+        msg.classList.add("err");
+        msg.textContent = "Failed to load: " + err.message;
+      }
+    }
+
     // ---- Wire controls ----
 
     wireRangeToggle("visitors");
     wireRangeToggle("conversions");
     wireRangeToggle("analytics");
     wireRangeToggle("visitor-analytics");
+    wireRangeToggle("funnel");
     $("#visitor-analytics-refresh").addEventListener("click", loadVisitorAnalytics);
+    $("#funnel-refresh").addEventListener("click", loadFunnel);
     $("#analytics-channel").addEventListener("change", loadAnalytics);
     $("#analytics-store").addEventListener("change", loadAnalytics);
     $("#analytics-refresh").addEventListener("click", loadAnalytics);

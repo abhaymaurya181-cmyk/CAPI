@@ -1,4 +1,4 @@
-import type { SaleInput } from "../lib/matcher.js";
+import type { SaleInput, SaleItem } from "../lib/matcher.js";
 import {
   getOrnaverseToken,
   joinPhone,
@@ -99,6 +99,51 @@ export async function fetchPosOrderPage(
   return json;
 }
 
+/** POS/Order/Retrieve has inline line_items — the only way to see what was bought. */
+interface OrderRetrieveResponse {
+  Entity?: {
+    transaction_id?: number;
+    line_items?: Array<Record<string, unknown>>;
+  };
+  Error?: { Code?: string; Message?: string };
+}
+
+export async function retrievePosOrderItems(
+  token: string,
+  transactionId: number,
+  fetchImpl: typeof fetch = fetch
+): Promise<SaleItem[]> {
+  const base = process.env.ORNAVERSE_API_BASE!.replace(/\/+$/, "");
+  const res = await fetchImpl(`${base}/Services/POS/Order/Retrieve`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ EntityId: transactionId }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`ornaverse_order_retrieve_failed:${res.status}`);
+  const json = (await res.json()) as OrderRetrieveResponse;
+  if (json.Error?.Code) {
+    throw new Error(`ornaverse_order_retrieve_error:${json.Error.Code}:${json.Error.Message ?? ""}`);
+  }
+  return extractItems(json.Entity?.line_items ?? []);
+}
+
+/** Pick just the display-friendly fields; drop everything else (PII, internal ids, 150+ nulls). */
+export function extractItems(lineItems: Array<Record<string, unknown>>): SaleItem[] {
+  const str = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() !== "" && v !== "NA" ? v : undefined;
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  return lineItems.map((li) => ({
+    type_name: str(li.type_name),
+    metal_name: str(li.metal_name),
+    karat_name: str(li.karat_name),
+    item_name: str(li.item_name),
+    pieces: num(li.pieces),
+    amount: num(li.net_amount),
+  }));
+}
+
 /** Map a POS/Order row to our neutral SaleInput. */
 export function mapOrderRow(row: OrderRow): SaleInput | null {
   if (!row.transaction_id) return null;
@@ -176,13 +221,27 @@ export async function fetchOrnaversePosOrdersDetailed(
     if (rows.length === 0) return { sales: out, capped: false };
 
     let oldestOnPageMs = Infinity;
+    const inWindow: Array<{ row: OrderRow; sale: SaleInput }> = [];
     for (const row of rows) {
       if (row.document_status == null || !allowed.has(row.document_status)) continue;
       const docMs = parseOrnaverseDate(row.document_date);
       if (docMs != null) oldestOnPageMs = Math.min(oldestOnPageMs, docMs);
       if (docMs != null && (docMs < fromMs || docMs >= toMs)) continue;
       const sale = mapOrderRow(row);
-      if (sale) out.push(sale);
+      if (sale) inWindow.push({ row, sale });
+    }
+    // Fetch line_items for every in-window order (one Retrieve per order).
+    // A failed Retrieve is NOT fatal — the order lands with no items instead.
+    for (const { row, sale } of inWindow) {
+      try {
+        if (row.transaction_id) {
+          const items = await retrievePosOrderItems(token, row.transaction_id, fetchImpl);
+          if (items.length) sale.items = items;
+        }
+      } catch {
+        // swallow — admin UI just shows no items for this order
+      }
+      out.push(sale);
     }
     if (oldestOnPageMs <= fromMs) return { sales: out, capped: false };
     if (rows.length < PAGE_SIZE) return { sales: out, capped: false };

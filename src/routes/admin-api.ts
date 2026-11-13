@@ -25,6 +25,7 @@ import {
   attributeOrders,
   summarizeAttribution,
   summarizeConversions,
+  summarizeFunnel,
   summarizeVisitorAttribution,
   type AttributionClicks,
   type Channel,
@@ -299,6 +300,46 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
       range: { from: range.from?.toISOString() ?? null, to: range.to?.toISOString() ?? null },
       truncated: snap.size === ANALYTICS_MAX_ROWS,
       attribution,
+    });
+  });
+
+  // Strict 3-stage funnel: Visitor (first_seen in range) → Store Visit
+  // (after first_seen) → Buyer (after store visit). Default range is 90 days
+  // because jewelry journeys are slow; use the normal range selector client-side.
+  app.get<{
+    Querystring: { range?: string; from?: string; to?: string };
+  }>("/admin/api/funnel", async (req, reply) => {
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
+    const range = parseIstSaleRange(req.query);
+
+    let vq: FirebaseFirestore.Query = visitorsCol;
+    if (range.from) vq = vq.where("first_seen_at", ">=", Timestamp.fromDate(range.from));
+    if (range.to) vq = vq.where("first_seen_at", "<", Timestamp.fromDate(range.to));
+    const vSnap = await vq.orderBy("first_seen_at", "desc").limit(ANALYTICS_MAX_ROWS).get();
+    const visitors = vSnap.docs.map((d) => ({
+      key: d.id,
+      first_seen_ms: (d.data() as Visitor).first_seen_at.toMillis(),
+    }));
+
+    let cq: FirebaseFirestore.Query = conversionsCol;
+    if (range.from) cq = cq.where("event_time", ">=", Timestamp.fromDate(range.from));
+    if (range.to) cq = cq.where("event_time", "<", Timestamp.fromDate(range.to));
+    const cSnap = await cq.orderBy("event_time", "desc").limit(ANALYTICS_MAX_ROWS).get();
+    const conversions = cSnap.docs
+      .map((d) => d.data() as ConversionLog)
+      .filter((log) => log.match?.visitor_key)
+      .map((log) => ({
+        log,
+        event_ms: log.event_time.toMillis(),
+        visitor_key: log.match!.visitor_key!,
+      }));
+
+    const funnel = summarizeFunnel(visitors, conversions);
+    return reply.send({
+      range: { from: range.from?.toISOString() ?? null, to: range.to?.toISOString() ?? null },
+      truncated_visitors: vSnap.size === ANALYTICS_MAX_ROWS,
+      truncated_conversions: cSnap.size === ANALYTICS_MAX_ROWS,
+      ...funnel,
     });
   });
 
