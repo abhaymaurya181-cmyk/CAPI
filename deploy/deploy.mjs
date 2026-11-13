@@ -114,6 +114,22 @@ export const JOBS = [
     scheduleEnv: "RESCAN_VISITS_SCHEDULE",
     schedule: "0 4 * * *",
   },
+  // POS Orders feed (replaces POS/Invoice as the primary store-sale source).
+  // Reports event_time = order creation date, so advance orders credit the
+  // right day. Scheduled off the existing POS/Invoice job; pause the old one
+  // in Cloud Scheduler UI after cutover so both don't produce conversions.
+  {
+    suffix: "sync-pos-orders",
+    path: "/internal/sync-pos-orders",
+    scheduleEnv: "SYNC_POS_ORDERS_SCHEDULE",
+    schedule: "45 * * * *",
+  },
+  {
+    suffix: "sync-pos-orders-rescan",
+    path: "/internal/sync-pos-orders-rescan",
+    scheduleEnv: "RESCAN_POS_ORDERS_SCHEDULE",
+    schedule: "15 4 * * *",
+  },
 ];
 
 // ---------------------------------------------------------------- pure helpers (unit-tested)

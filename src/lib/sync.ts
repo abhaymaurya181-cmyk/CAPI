@@ -24,6 +24,10 @@ import {
   fetchOrnaverseVisits,
   fetchOrnaverseVisitsDetailed,
 } from "../importers/ornaverse-visits.js";
+import {
+  fetchOrnaversePosOrders,
+  fetchOrnaversePosOrdersDetailed,
+} from "../importers/ornaverse-pos-orders.js";
 import type { EventType } from "./firestore.js";
 
 const DISPATCH_CONCURRENCY = 10;
@@ -416,6 +420,104 @@ export async function runOrnaverseVisitsRescan(): Promise<SyncRun & { id: string
       actionSource: "physical_store",
       eventType: "store_visit",
     });
+    const status = fetched.capped && finalStatus(summary) === "ok" ? "partial" : finalStatus(summary);
+    await ref.update({
+      status,
+      finished_at: Timestamp.now(),
+      ...summary,
+      ...(fetched.capped ? { error: "page_limit_reached" } : {}),
+    });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  } finally {
+    await stateRef.set({ locked_until: null }, { merge: true });
+  }
+}
+
+/** POS Orders feed: 60-day initial lookback (advance orders can be weeks old). */
+const POS_ORDERS_INITIAL_LOOKBACK_DAYS = 60;
+
+/**
+ * Scheduled / manual OrnaVerse POS Order pull. Reports event_time as the
+ * order creation date, so advance orders (placed weeks before invoice)
+ * credit the ad platform on the correct day.
+ *
+ * The first run (no cursor) is a one-off backfill: 60-day lookback and
+ * status=1 only, so status=2 orders that the old Invoice importer already
+ * logged don't fire a second conversion. Every run after that is a normal
+ * hourly pull: 7-day window (via nextWindow) and status={1,2} so RTS
+ * walk-in sales (status jumps straight to 2) land correctly.
+ */
+export async function runOrnaversePosOrdersSync(trigger: SyncTrigger): Promise<SyncRun & { id: string }> {
+  const source = "ornaverse_offline"; // same source as invoices, just a different endpoint
+  const scheduledKey = "ornaverse_pos_orders"; // own cursor/lock, separate from invoice cursor
+
+  const skipped = async (error: string) => {
+    const ref = await startRun(source, trigger);
+    await ref.update({ status: "skipped", error, finished_at: Timestamp.now() });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  };
+
+  if (!ornaverseConfigured()) return skipped("ornaverse_not_configured");
+  if (!(await acquireLock(scheduledKey))) return skipped("another_sync_running");
+
+  const stateRef = syncStateCol.doc(scheduledKey);
+  try {
+    const state = (await stateRef.get()).data() as SyncState | undefined;
+    const isBackfill = !state?.last_window_to;
+    const window = nextWindow(state, Date.now(), POS_ORDERS_INITIAL_LOOKBACK_DAYS);
+    const ref = await startRun(source, trigger, window);
+
+    let sales: SaleInput[];
+    try {
+      sales = await fetchOrnaversePosOrders(window.from, window.to, { backfill: isBackfill });
+    } catch (err) {
+      await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
+      return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+    }
+
+    const summary = await importSales(sales, source, ref.id, { onlyNew: true });
+    await ref.update({ status: finalStatus(summary), finished_at: Timestamp.now(), ...summary });
+    await stateRef.set(
+      { last_window_to: Timestamp.fromDate(window.to), last_run_id: ref.id },
+      { merge: true }
+    );
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  } finally {
+    await stateRef.set({ locked_until: null }, { merge: true });
+  }
+}
+
+/** Daily safety re-scan for POS orders. Mirrors the invoice rescan semantics. */
+export async function runOrnaversePosOrdersRescan(): Promise<SyncRun & { id: string }> {
+  const source = "ornaverse_offline";
+  const scheduledKey = "ornaverse_pos_orders";
+  const trigger: SyncTrigger = "rescan";
+
+  const skipped = async (error: string) => {
+    const ref = await startRun(source, trigger);
+    await ref.update({ status: "skipped", error, finished_at: Timestamp.now() });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  };
+
+  if (!ornaverseConfigured()) return skipped("ornaverse_not_configured");
+  if (!(await acquireLock(scheduledKey))) return skipped("another_sync_running");
+
+  const stateRef = syncStateCol.doc(scheduledKey);
+  try {
+    const now = Date.now();
+    const window = { from: new Date(now - rescanDays() * 24 * 3600 * 1000), to: new Date(now) };
+    const ref = await startRun(source, trigger, window);
+
+    let fetched: { sales: SaleInput[]; capped: boolean };
+    try {
+      // Rescan is always "ongoing" mode (cursor already set), so status={1,2}.
+      fetched = await fetchOrnaversePosOrdersDetailed(window.from, window.to, { backfill: false });
+    } catch (err) {
+      await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
+      return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+    }
+
+    const summary = await importSales(fetched.sales, source, ref.id, { onlyNew: true });
     const status = fetched.capped && finalStatus(summary) === "ok" ? "partial" : finalStatus(summary);
     await ref.update({
       status,

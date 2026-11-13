@@ -4,6 +4,8 @@ import { requireBearer } from "../lib/auth.js";
 import {
   runOrnaverseMarketplaceRescan,
   runOrnaverseMarketplaceSync,
+  runOrnaversePosOrdersRescan,
+  runOrnaversePosOrdersSync,
   runOrnaverseRescan,
   runOrnaverseSync,
   runOrnaverseVisitsRescan,
@@ -108,6 +110,32 @@ export default async function syncRoute(app: FastifyInstance): Promise<void> {
   app.post("/admin/api/sync-visits", async (req, reply) => {
     if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const run = await runOrnaverseVisitsSync("manual");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // Cloud Scheduler: POS Orders (event_time = order creation date). Replaces
+  // the older POS/Invoice feed as the primary store-sale source. Invoice
+  // scheduler is paused separately in Cloud Scheduler (code kept).
+  app.post("/internal/sync-pos-orders", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaversePosOrdersSync("schedule");
+    req.log.info({ run: run.id, status: run.status, error: run.error }, "pos orders sync complete");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  app.post("/internal/sync-pos-orders-rescan", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaversePosOrdersRescan();
+    req.log.info(
+      { run: run.id, status: run.status, error: run.error, new: run.processed, existing: run.skipped_duplicate },
+      "pos orders rescan complete"
+    );
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  app.post("/admin/api/sync-pos-orders", async (req, reply) => {
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
+    const run = await runOrnaversePosOrdersSync("manual");
     return reply.send(serializeRun(run.id, run));
   });
 
