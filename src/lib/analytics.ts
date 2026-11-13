@@ -43,16 +43,24 @@ export interface AttributionClicks {
   last_meta_at?: number;
 }
 
-export interface AttributionShare {
-  google: number;
-  meta: number;
-  direct: number;
+/** Per-source result in one attribution model. */
+export interface AttributionCell {
+  /** Fractional share of orders in the range, 0..1. */
+  share: number;
+  /** Order count attributed to this source. Fractional for linear. */
+  count: number;
+}
+
+export interface AttributionModelResult {
+  google: AttributionCell;
+  meta: AttributionCell;
+  direct: AttributionCell;
 }
 
 export interface AttributionSummary {
-  first_click: AttributionShare;
-  last_click: AttributionShare;
-  linear: AttributionShare;
+  first_click: AttributionModelResult;
+  last_click: AttributionModelResult;
+  linear: AttributionModelResult;
   total_orders: number;
 }
 
@@ -211,10 +219,14 @@ export function summarizeAttribution(
     }
   }
 
-  const normalize = (s: { google: number; meta: number; direct: number }): AttributionShare => ({
-    google: rate(s.google, rows.length),
-    meta: rate(s.meta, rows.length),
-    direct: rate(s.direct, rows.length),
+  const cell = (count: number): AttributionCell => ({
+    share: rate(count, rows.length),
+    count: round2(count),
+  });
+  const normalize = (s: { google: number; meta: number; direct: number }): AttributionModelResult => ({
+    google: cell(s.google),
+    meta: cell(s.meta),
+    direct: cell(s.direct),
   });
 
   return {

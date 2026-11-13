@@ -114,9 +114,9 @@ test("summarizeAttribution: first-click wins by earliest timestamp", () => {
     { log: log({}), clicks: { first_meta_at: T.D1, first_google_at: T.D2 } },
   ];
   const a = summarizeAttribution(items);
-  assert.equal(a.first_click.google, 0.5);
-  assert.equal(a.first_click.meta, 0.5);
-  assert.equal(a.first_click.direct, 0);
+  assert.deepEqual(a.first_click.google, { share: 0.5, count: 1 });
+  assert.deepEqual(a.first_click.meta, { share: 0.5, count: 1 });
+  assert.deepEqual(a.first_click.direct, { share: 0, count: 0 });
 });
 
 test("summarizeAttribution: last-click wins by latest timestamp", () => {
@@ -125,8 +125,8 @@ test("summarizeAttribution: last-click wins by latest timestamp", () => {
     { log: log({}), clicks: { last_google_at: T.D4, last_meta_at: T.D1 } },
   ];
   const a = summarizeAttribution(items);
-  assert.equal(a.last_click.meta, 0.5);
-  assert.equal(a.last_click.google, 0.5);
+  assert.deepEqual(a.last_click.meta, { share: 0.5, count: 1 });
+  assert.deepEqual(a.last_click.google, { share: 0.5, count: 1 });
 });
 
 test("summarizeAttribution: linear splits by unique touchpoints, same-click dedupes", () => {
@@ -138,17 +138,17 @@ test("summarizeAttribution: linear splits by unique touchpoints, same-click dedu
   ];
   const a = summarizeAttribution(items);
   // Order 1: g 0.5 + m 0.5. Order 2: g 1.0. Sum: g 1.5, m 0.5 over 2 orders.
-  assert.equal(a.linear.google, 0.75);
-  assert.equal(a.linear.meta, 0.25);
-  assert.equal(a.linear.direct, 0);
+  assert.deepEqual(a.linear.google, { share: 0.75, count: 1.5 });
+  assert.deepEqual(a.linear.meta, { share: 0.25, count: 0.5 });
+  assert.deepEqual(a.linear.direct, { share: 0, count: 0 });
 });
 
 test("summarizeAttribution: no clicks → direct for all models", () => {
   const items = [{ log: log({}), clicks: undefined }, { log: log({}), clicks: {} }];
   const a = summarizeAttribution(items);
-  assert.equal(a.first_click.direct, 1);
-  assert.equal(a.last_click.direct, 1);
-  assert.equal(a.linear.direct, 1);
+  assert.deepEqual(a.first_click.direct, { share: 1, count: 2 });
+  assert.deepEqual(a.last_click.direct, { share: 1, count: 2 });
+  assert.deepEqual(a.linear.direct, { share: 1, count: 2 });
   assert.equal(a.total_orders, 2);
 });
 
@@ -157,13 +157,13 @@ test("summarizeAttribution: channel filter applies (online vs offline)", () => {
     { log: log({ action_source: "website" }), clicks: { first_google_at: T.D1 } },
     { log: log({ action_source: "physical_store" }), clicks: { first_meta_at: T.D1 } },
   ];
-  assert.equal(summarizeAttribution(items, { channel: "online" }).first_click.google, 1);
-  assert.equal(summarizeAttribution(items, { channel: "offline" }).first_click.meta, 1);
+  assert.deepEqual(summarizeAttribution(items, { channel: "online" }).first_click.google, { share: 1, count: 1 });
+  assert.deepEqual(summarizeAttribution(items, { channel: "offline" }).first_click.meta, { share: 1, count: 1 });
 });
 
 test("summarizeAttribution: empty input returns zeros", () => {
   const a = summarizeAttribution([]);
   assert.equal(a.total_orders, 0);
-  assert.equal(a.first_click.google, 0);
-  assert.equal(a.last_click.direct, 0);
+  assert.deepEqual(a.first_click.google, { share: 0, count: 0 });
+  assert.deepEqual(a.last_click.direct, { share: 0, count: 0 });
 });

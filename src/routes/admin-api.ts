@@ -13,6 +13,7 @@ import {
   type Visitor,
 } from "../lib/firestore.js";
 import { clickMode } from "../lib/click-ids.js";
+import { clickWindowMs } from "../lib/matcher.js";
 import { requireBearer } from "../lib/auth.js";
 import { dispatchConversion } from "../senders/dispatcher.js";
 import { requeueStuck } from "../lib/requeue.js";
@@ -234,10 +235,26 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
         });
       }
     }
-    const items = logs.map((log) => ({
-      log,
-      clicks: log.match?.visitor_key ? clicksByKey.get(log.match.visitor_key) : undefined,
-    }));
+    // Apply the matcher's eligibility rule (click before sale, within the
+    // click-through window) so attribution lines up with "With ad click".
+    const windowMs = clickWindowMs();
+    const items = logs.map((log) => {
+      const key = log.match?.visitor_key;
+      const raw = key ? clicksByKey.get(key) : undefined;
+      if (!raw) return { log };
+      const saleMs = log.event_time.toMillis();
+      const eligible = (t?: number) =>
+        t != null && t <= saleMs && saleMs - t <= windowMs ? t : undefined;
+      return {
+        log,
+        clicks: {
+          first_google_at: eligible(raw.first_google_at),
+          last_google_at: eligible(raw.last_google_at),
+          first_meta_at: eligible(raw.first_meta_at),
+          last_meta_at: eligible(raw.last_meta_at),
+        },
+      };
+    });
     const attribution = summarizeAttribution(items, filters);
 
     return reply.send({

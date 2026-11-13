@@ -915,6 +915,35 @@
       color: var(--brand); margin: 0 0 8px;
     }
     .analytics-tables .table-wrap { max-height: 420px; }
+    .attribution-section {
+      margin-top: 18px;
+      max-width: 720px;
+    }
+    .attribution-section h3 {
+      font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--brand); margin: 0 0 6px;
+    }
+    .attribution-note {
+      font-size: 12px; line-height: 1.5; margin-bottom: 10px;
+    }
+    .attribution-wrap {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .attribution-table { margin: 0; }
+    .attribution-table th,
+    .attribution-table td {
+      padding: 10px 14px;
+    }
+    .attribution-table th:first-child,
+    .attribution-table td:first-child {
+      width: 44%;
+      font-weight: 500;
+    }
+    .attribution-table .num { font-variant-numeric: tabular-nums; }
+    .attribution-table .attr-pct { font-weight: 600; }
+    .attribution-table .attr-count { color: var(--muted); font-size: 12px; margin-left: 6px; }
     .bar {
       display: inline-block; height: 8px; border-radius: 4px;
       background: var(--accent); vertical-align: middle; margin-right: 8px;
@@ -1089,26 +1118,26 @@
           </div>
           <div class="kpi-grid" id="analytics-kpis"></div>
           <div id="analytics-chips"></div>
-          <div class="analytics-tables">
-            <div style="grid-column: 1 / -1;">
-              <h3>Attribution — share of orders by source</h3>
-              <div class="muted" style="margin-bottom: 8px;">
-                Last-click (non-direct) is the same as last-click here — we only log ad clicks, not direct visits, so there's nothing to skip.
-              </div>
-              <div class="table-wrap">
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th>Attribution model</th>
-                      <th class="num">Google</th>
-                      <th class="num">Meta</th>
-                      <th class="num">Direct / Organic</th>
-                    </tr>
-                  </thead>
-                  <tbody id="analytics-attribution"></tbody>
-                </table>
-              </div>
+          <div class="attribution-section">
+            <h3>Attribution — share of orders by source</h3>
+            <div class="attribution-note muted">
+              Last-click (non-direct) matches last-click here — we only log ad clicks, not direct visits, so there is nothing to skip. Counts respect the same click-through window as "With ad click" above.
             </div>
+            <div class="attribution-wrap">
+              <table class="data-table attribution-table">
+                <thead>
+                  <tr>
+                    <th>Attribution model</th>
+                    <th class="num">Google</th>
+                    <th class="num">Meta</th>
+                    <th class="num">Direct / Organic</th>
+                  </tr>
+                </thead>
+                <tbody id="analytics-attribution"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="analytics-tables">
             <div>
               <h3>By store</h3>
               <div class="table-wrap">
@@ -1993,12 +2022,15 @@
           : `<tr><td colspan="5" class="muted center">No sales in this range.</td></tr>`;
 
         const attr = a.attribution;
-        const attrRow = (label, s) => `
+        const fmtCount = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+        const attrCell = (c) =>
+          `<td class="num"><span class="attr-pct">${pct(c.share)}</span><span class="attr-count">(${fmtCount(c.count)})</span></td>`;
+        const attrRow = (label, m) => `
           <tr>
             <td>${label}</td>
-            <td class="num">${pct(s.google)}</td>
-            <td class="num">${pct(s.meta)}</td>
-            <td class="num">${pct(s.direct)}</td>
+            ${attrCell(m.google)}
+            ${attrCell(m.meta)}
+            ${attrCell(m.direct)}
           </tr>`;
         $("#analytics-attribution").innerHTML = attr && attr.total_orders
           ? [
