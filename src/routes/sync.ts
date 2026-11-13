@@ -1,7 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { syncRunsCol, type SyncRun } from "../lib/firestore.js";
 import { requireBearer } from "../lib/auth.js";
-import { runOrnaverseRescan, runOrnaverseSync } from "../lib/sync.js";
+import {
+  runOrnaverseMarketplaceRescan,
+  runOrnaverseMarketplaceSync,
+  runOrnaverseRescan,
+  runOrnaverseSync,
+} from "../lib/sync.js";
 import { requeueStuck } from "../lib/requeue.js";
 
 function serializeRun(id: string, r: SyncRun) {
@@ -50,6 +55,32 @@ export default async function syncRoute(app: FastifyInstance): Promise<void> {
   app.post("/admin/api/sync-offline", async (req, reply) => {
     if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const run = await runOrnaverseSync("manual");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // Cloud Scheduler: MarketPlace (online) hourly pull.
+  app.post("/internal/sync-online", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaverseMarketplaceSync("schedule");
+    req.log.info({ run: run.id, status: run.status, error: run.error }, "online sync complete");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // Cloud Scheduler, daily: MarketPlace re-scan.
+  app.post("/internal/sync-online-rescan", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaverseMarketplaceRescan();
+    req.log.info(
+      { run: run.id, status: run.status, error: run.error, new: run.processed, existing: run.skipped_duplicate },
+      "online rescan complete"
+    );
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // "Sync now" for the online feed from the admin UI.
+  app.post("/admin/api/sync-online", async (req, reply) => {
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
+    const run = await runOrnaverseMarketplaceSync("manual");
     return reply.send(serializeRun(run.id, run));
   });
 

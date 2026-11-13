@@ -118,7 +118,7 @@ export interface Visitor {
   consent?: VisitorConsent;
 }
 
-export type ConversionSource = "ornaverse_offline" | "csv_upload";
+export type ConversionSource = "ornaverse_offline" | "ornaverse_marketplace" | "csv_upload";
 // pending: not tried yet. retrying: failed, another attempt is scheduled.
 // failed: no more automatic attempts (permanent error or retries used up).
 // validated: Google validateOnly passed, nothing sent.

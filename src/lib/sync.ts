@@ -16,6 +16,10 @@ import {
   fetchOrnaverseSalesDetailed,
   ornaverseConfigured,
 } from "../importers/ornaverse.js";
+import {
+  fetchOrnaverseMarketplaceSales,
+  fetchOrnaverseMarketplaceSalesDetailed,
+} from "../importers/ornaverse-marketplace.js";
 
 const DISPATCH_CONCURRENCY = 10;
 const MAX_STORED_FAILURES = 50;
@@ -71,7 +75,7 @@ async function importSales(
   sales: SaleInput[],
   source: ConversionSource,
   runId: string,
-  opts: { onlyNew?: boolean } = {}
+  opts: { onlyNew?: boolean; actionSource?: "website" | "physical_store" } = {}
 ): Promise<ImportSummary> {
   const s: ImportSummary = {
     fetched: sales.length,
@@ -98,7 +102,7 @@ async function importSales(
 
   for (const sale of sales) {
     try {
-      const out = await ingestSale(sale, source, runId);
+      const out = await ingestSale(sale, source, runId, opts.actionSource);
       if (out.kind === "duplicate") s.skipped_duplicate++;
       else if (out.kind === "invalid") fail(sale.sale_id, out.error);
       else {
@@ -231,6 +235,92 @@ export async function runOrnaverseSync(trigger: SyncTrigger): Promise<SyncRun & 
       { last_window_to: Timestamp.fromDate(window.to), last_run_id: ref.id },
       { merge: true }
     );
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  } finally {
+    await stateRef.set({ locked_until: null }, { merge: true });
+  }
+}
+
+/**
+ * Scheduled / manual OrnaVerse MarketPlace pull (online orders).
+ * Mirrors `runOrnaverseSync` but hits a different endpoint and tags every
+ * conversion with `action_source: "website"`, which makes the dispatcher
+ * skip Meta and Google (Shopify's pixel already reports these sales).
+ */
+export async function runOrnaverseMarketplaceSync(trigger: SyncTrigger): Promise<SyncRun & { id: string }> {
+  const source = "ornaverse_marketplace";
+
+  const skipped = async (error: string) => {
+    const ref = await startRun(source, trigger);
+    await ref.update({ status: "skipped", error, finished_at: Timestamp.now() });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  };
+
+  if (!ornaverseConfigured()) return skipped("ornaverse_not_configured");
+  if (!(await acquireLock(source))) return skipped("another_sync_running");
+
+  const stateRef = syncStateCol.doc(source);
+  try {
+    const state = (await stateRef.get()).data() as SyncState | undefined;
+    const window = nextWindow(state, Date.now());
+    const ref = await startRun(source, trigger, window);
+
+    let sales: SaleInput[];
+    try {
+      sales = await fetchOrnaverseMarketplaceSales(window.from, window.to);
+    } catch (err) {
+      await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
+      return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+    }
+
+    const summary = await importSales(sales, source, ref.id, { onlyNew: true, actionSource: "website" });
+    await ref.update({ status: finalStatus(summary), finished_at: Timestamp.now(), ...summary });
+    await stateRef.set(
+      { last_window_to: Timestamp.fromDate(window.to), last_run_id: ref.id },
+      { merge: true }
+    );
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  } finally {
+    await stateRef.set({ locked_until: null }, { merge: true });
+  }
+}
+
+/** Daily safety re-scan for marketplace orders — same semantics as the POS rescan. */
+export async function runOrnaverseMarketplaceRescan(): Promise<SyncRun & { id: string }> {
+  const source = "ornaverse_marketplace";
+  const trigger: SyncTrigger = "rescan";
+
+  const skipped = async (error: string) => {
+    const ref = await startRun(source, trigger);
+    await ref.update({ status: "skipped", error, finished_at: Timestamp.now() });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  };
+
+  if (!ornaverseConfigured()) return skipped("ornaverse_not_configured");
+  if (!(await acquireLock(source))) return skipped("another_sync_running");
+
+  const stateRef = syncStateCol.doc(source);
+  try {
+    const now = Date.now();
+    const window = { from: new Date(now - rescanDays() * 24 * 3600 * 1000), to: new Date(now) };
+    const ref = await startRun(source, trigger, window);
+
+    let fetched: { sales: SaleInput[]; capped: boolean };
+    try {
+      fetched = await fetchOrnaverseMarketplaceSalesDetailed(window.from, window.to);
+    } catch (err) {
+      await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
+      return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+    }
+
+    const summary = await importSales(fetched.sales, source, ref.id, { onlyNew: true, actionSource: "website" });
+    const status = fetched.capped && finalStatus(summary) === "ok" ? "partial" : finalStatus(summary);
+    await ref.update({
+      status,
+      finished_at: Timestamp.now(),
+      ...summary,
+      ...(fetched.capped ? { error: "page_limit_reached" } : {}),
+    });
     return { ...((await ref.get()).data() as SyncRun), id: ref.id };
   } finally {
     await stateRef.set({ locked_until: null }, { merge: true });

@@ -107,6 +107,21 @@ test("buildConversion: no visitor → hashes only, no clicks", () => {
   assert.ok(c.phone_meta);
 });
 
+test("buildConversion: action_source=website → no sender records (show-only)", () => {
+  const c = buildConversion(sale, "ornaverse_marketplace", visitor(), {
+    mode: "last",
+    windowMs: WINDOW,
+    nowMs: SALE,
+    action_source: "website",
+  });
+  assert.equal(c.action_source, "website");
+  assert.equal(c.meta_capi, undefined, "Meta sender must be skipped for website orders");
+  assert.equal(c.google_ads, undefined, "Google sender must be skipped for website orders");
+  // Match info + hashes still populated so the row is visible in the admin.
+  assert.equal(c.match?.matched_by, "phone");
+  assert.ok(c.phone_meta);
+});
+
 test("nextWindow: initial lookback, then overlap before the cursor", () => {
   const now = SALE;
   const first = nextWindow(undefined, now, 7);

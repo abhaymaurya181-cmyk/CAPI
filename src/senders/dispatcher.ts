@@ -17,6 +17,9 @@ export type Sender = "meta_capi" | "google_ads";
 export async function dispatchConversion(orderId: string, only?: Sender): Promise<void> {
   const log = await getConversion(orderId);
   if (!log) return;
+  // Online orders are show-only on the dashboard; Shopify's own pixel already
+  // reports them to Meta and Google, so firing again would double-count.
+  if (log.action_source === "website") return;
 
   const tasks: Promise<void>[] = [];
 

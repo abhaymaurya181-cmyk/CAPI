@@ -122,7 +122,13 @@ export function buildConversion(
   sale: SaleInput,
   source: ConversionSource,
   match: VisitorMatch | null,
-  opts: { mode?: ClickMode; windowMs?: number; nowMs?: number; syncRunId?: string } = {}
+  opts: {
+    mode?: ClickMode;
+    windowMs?: number;
+    nowMs?: number;
+    syncRunId?: string;
+    action_source?: "website" | "physical_store";
+  } = {}
 ): Omit<ConversionLog, "created_at" | "updated_at"> {
   const mode = opts.mode ?? clickMode();
   const windowMs = opts.windowMs ?? clickWindowMs();
@@ -155,6 +161,11 @@ export function buildConversion(
   };
 
   const country = (sale.country ?? "IN").trim();
+  // Website orders are show-only: Shopify's own pixel already reports them
+  // to Google and Meta, so firing again would double-count. We leave the
+  // sender records off entirely; the dispatcher skips them too.
+  const action_source: "website" | "physical_store" = opts.action_source ?? "physical_store";
+  const showOnly = action_source === "website";
 
   return {
     source,
@@ -193,9 +204,10 @@ export function buildConversion(
     fbp: visitor?.fbp,
     client_ip_address: visitor?.client_ip_address,
     client_user_agent: visitor?.client_user_agent,
-    action_source: "physical_store",
-    meta_capi: pendingSender(opts.nowMs),
-    google_ads: pendingSender(opts.nowMs),
+    action_source,
+    ...(showOnly
+      ? {}
+      : { meta_capi: pendingSender(opts.nowMs), google_ads: pendingSender(opts.nowMs) }),
   };
 }
 
@@ -213,7 +225,8 @@ export type IngestOutcome =
 export async function ingestSale(
   sale: SaleInput,
   source: ConversionSource,
-  syncRunId?: string
+  syncRunId?: string,
+  action_source: "website" | "physical_store" = "physical_store"
 ): Promise<IngestOutcome> {
   if (!sale.phone && !sale.email) return { kind: "invalid", error: "no_identifier" };
   if (Number.isNaN(sale.event_time.getTime())) return { kind: "invalid", error: "bad_event_time" };
@@ -236,7 +249,7 @@ export async function ingestSale(
   const windowMs = clickWindowMs();
   const match = combineCandidates(candidates, mode, sale.event_time.getTime(), windowMs);
 
-  const row = buildConversion(sale, source, match, { syncRunId, mode, windowMs });
+  const row = buildConversion(sale, source, match, { syncRunId, mode, windowMs, action_source });
   if (existing?.meta_capi?.status === "success") row.meta_capi = existing.meta_capi;
   if (existing?.google_ads?.status === "success") row.google_ads = existing.google_ads;
 

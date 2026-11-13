@@ -78,6 +78,20 @@ export const JOBS = [
     scheduleEnv: "RESCAN_SCHEDULE",
     schedule: "30 3 * * *",
   },
+  // Marketplace / online orders: separate lock from the POS feed, so the two
+  // run in parallel. Hourly pull at :15 to stagger from the POS pull at :00.
+  {
+    suffix: "sync-online",
+    path: "/internal/sync-online",
+    scheduleEnv: "SYNC_ONLINE_SCHEDULE",
+    schedule: "15 * * * *",
+  },
+  {
+    suffix: "sync-online-rescan",
+    path: "/internal/sync-online-rescan",
+    scheduleEnv: "RESCAN_ONLINE_SCHEDULE",
+    schedule: "45 3 * * *",
+  },
 ];
 
 // ---------------------------------------------------------------- pure helpers (unit-tested)
