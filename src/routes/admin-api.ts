@@ -112,9 +112,12 @@ function applyRange(
   base: FirebaseFirestore.Query,
   range: { from: Timestamp | null; to: Timestamp | null }
 ): FirebaseFirestore.Query {
+  // Filter by event_time (when the sale happened), not created_at (when we
+  // wrote the row). A backfill run would otherwise skew every date filter
+  // towards the import day instead of the actual sale day.
   let q = base;
-  if (range.from) q = q.where("created_at", ">=", range.from);
-  if (range.to) q = q.where("created_at", "<=", range.to);
+  if (range.from) q = q.where("event_time", ">=", range.from);
+  if (range.to) q = q.where("event_time", "<=", range.to);
   return q;
 }
 
@@ -386,7 +389,8 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
         )
       );
     }
-    q = applyRange(q, range).orderBy("created_at", "desc").limit(limit);
+    // orderBy must match the range field. event_time is auto-indexed by Firestore.
+    q = applyRange(q, range).orderBy("event_time", "desc").limit(limit);
 
     const snap = await q.get();
       const items = snap.docs.map((d) => {

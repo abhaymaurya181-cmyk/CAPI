@@ -59,10 +59,10 @@ export const SECRET_GROUPS = {
 /** Non-secret settings and their production defaults (env var overrides). */
 export const SETTINGS = {
   GOOGLE_VALIDATE_ONLY: "false", // live: real Purchase conversions reach Google Ads
-  // Store Visit and Website Purchase each have their own flag so they can be
-  // staged in validate-only mode without touching live store sales.
-  GOOGLE_STORE_VISIT_VALIDATE_ONLY: "true",
-  GOOGLE_WEBSITE_VALIDATE_ONLY: "true",
+  // All three event streams are live. Keep the separate flags so we can stage
+  // a new one back into validate-only without touching the others.
+  GOOGLE_STORE_VISIT_VALIDATE_ONLY: "false",
+  GOOGLE_WEBSITE_VALIDATE_ONLY: "false",
   ORNAVERSE_SCOPE: "openid",
   ORNAVERSE_POSTED_STATUSES: "1", // 1 = posted; returns (2) are never imported
   ORNAVERSE_INITIAL_LOOKBACK_DAYS: "7",
