@@ -1090,6 +1090,25 @@
           <div class="kpi-grid" id="analytics-kpis"></div>
           <div id="analytics-chips"></div>
           <div class="analytics-tables">
+            <div style="grid-column: 1 / -1;">
+              <h3>Attribution — share of orders by source</h3>
+              <div class="muted" style="margin-bottom: 8px;">
+                Last-click (non-direct) is the same as last-click here — we only log ad clicks, not direct visits, so there's nothing to skip.
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Attribution model</th>
+                      <th class="num">Google</th>
+                      <th class="num">Meta</th>
+                      <th class="num">Direct / Organic</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-attribution"></tbody>
+                </table>
+              </div>
+            </div>
             <div>
               <h3>By store</h3>
               <div class="table-wrap">
@@ -1972,6 +1991,22 @@
               return bucketRow(day, b, bar);
             }).join("")
           : `<tr><td colspan="5" class="muted center">No sales in this range.</td></tr>`;
+
+        const attr = a.attribution;
+        const attrRow = (label, s) => `
+          <tr>
+            <td>${label}</td>
+            <td class="num">${pct(s.google)}</td>
+            <td class="num">${pct(s.meta)}</td>
+            <td class="num">${pct(s.direct)}</td>
+          </tr>`;
+        $("#analytics-attribution").innerHTML = attr && attr.total_orders
+          ? [
+              attrRow("First click", attr.first_click),
+              attrRow("Last click (non-direct)", attr.last_click),
+              attrRow("Linear", attr.linear),
+            ].join("")
+          : `<tr><td colspan="4" class="muted center">No sales in this range.</td></tr>`;
       } catch (err) {
         msg.classList.add("err");
         msg.textContent = "Failed to load: " + err.message;

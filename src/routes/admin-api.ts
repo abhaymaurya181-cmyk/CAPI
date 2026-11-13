@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { Filter, Timestamp } from "@google-cloud/firestore";
 import {
   conversionsCol,
+  db,
   getConversion,
   visitorsCol,
   type ConversionLog,
@@ -19,7 +20,12 @@ import { sweepRetries } from "./retry-sweep.js";
 import { hashEmail, hashPhoneForMeta } from "../lib/hash.js";
 import { buildConversion, type SaleInput } from "../lib/matcher.js";
 import { buildMetaPayload, metaPreflightError } from "../senders/meta.js";
-import { summarizeConversions, type Channel } from "../lib/analytics.js";
+import {
+  summarizeAttribution,
+  summarizeConversions,
+  type AttributionClicks,
+  type Channel,
+} from "../lib/analytics.js";
 import {
   INGEST_URL as GOOGLE_INGEST_URL,
   buildGooglePayload,
@@ -203,18 +209,42 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
     if (range.from) q = q.where("event_time", ">=", Timestamp.fromDate(range.from));
     if (range.to) q = q.where("event_time", "<", Timestamp.fromDate(range.to));
     const snap = await q.orderBy("event_time", "desc").limit(ANALYTICS_MAX_ROWS).get();
+    const logs = snap.docs.map((d) => d.data() as ConversionLog);
 
     const channel = req.query.channel === "online" || req.query.channel === "offline"
       ? (req.query.channel as Channel)
       : undefined;
-    const summary = summarizeConversions(
-      snap.docs.map((d) => d.data() as ConversionLog),
-      { channel, store: req.query.store || undefined }
-    );
+    const filters = { channel, store: req.query.store || undefined };
+    const summary = summarizeConversions(logs, filters);
+
+    // Attribution needs each matched visitor's first+last click per platform.
+    const visitorKeys = [...new Set(logs.map((l) => l.match?.visitor_key).filter((k): k is string => !!k))];
+    const clicksByKey = new Map<string, AttributionClicks>();
+    if (visitorKeys.length) {
+      const refs = visitorKeys.map((k) => visitorsCol.doc(k));
+      const docs = await db.getAll(...refs);
+      for (const d of docs) {
+        if (!d.exists) continue;
+        const v = d.data() as Visitor;
+        clicksByKey.set(d.id, {
+          first_google_at: v.click_ids?.google?.first?.captured_at?.toMillis(),
+          last_google_at: v.click_ids?.google?.last?.captured_at?.toMillis(),
+          first_meta_at: v.click_ids?.meta?.first?.captured_at?.toMillis(),
+          last_meta_at: v.click_ids?.meta?.last?.captured_at?.toMillis(),
+        });
+      }
+    }
+    const items = logs.map((log) => ({
+      log,
+      clicks: log.match?.visitor_key ? clicksByKey.get(log.match.visitor_key) : undefined,
+    }));
+    const attribution = summarizeAttribution(items, filters);
+
     return reply.send({
       range: { from: range.from?.toISOString() ?? null, to: range.to?.toISOString() ?? null },
       truncated: snap.size === ANALYTICS_MAX_ROWS,
       ...summary,
+      attribution,
     });
   });
 

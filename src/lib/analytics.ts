@@ -35,6 +35,27 @@ export interface AnalyticsSummary {
   stores: string[];
 }
 
+/** First + last click timestamps (ms since epoch) from the matched visitor. */
+export interface AttributionClicks {
+  first_google_at?: number;
+  last_google_at?: number;
+  first_meta_at?: number;
+  last_meta_at?: number;
+}
+
+export interface AttributionShare {
+  google: number;
+  meta: number;
+  direct: number;
+}
+
+export interface AttributionSummary {
+  first_click: AttributionShare;
+  last_click: AttributionShare;
+  linear: AttributionShare;
+  total_orders: number;
+}
+
 const IST_OFFSET_MS = 5.5 * 3600 * 1000;
 const NO_STORE = "(no store)";
 
@@ -128,5 +149,78 @@ export function summarizeConversions(
       .map(([date, b]) => roundBucket({ date, ...b }))
       .sort((a, b) => b.date.localeCompare(a.date)),
     stores,
+  };
+}
+
+function emptyShare(): { google: number; meta: number; direct: number } {
+  return { google: 0, meta: 0, direct: 0 };
+}
+
+/**
+ * For each conversion, award 1.0 of credit across platforms per attribution model.
+ * First/last-click = winner takes all; linear splits across unique touchpoints.
+ * No touchpoints → full credit to "direct". Shares are expressed as a fraction
+ * of total orders (0..1).
+ */
+export function summarizeAttribution(
+  items: Array<{ log: ConversionLog; clicks?: AttributionClicks }>,
+  filters: AnalyticsFilters = {}
+): AttributionSummary {
+  const rows = items.filter(
+    ({ log }) =>
+      (!filters.channel || channelOf(log) === filters.channel) &&
+      (!filters.store || (log.store_name || NO_STORE) === filters.store)
+  );
+
+  const first_click = emptyShare();
+  const last_click = emptyShare();
+  const linear = emptyShare();
+
+  for (const { clicks } of rows) {
+    const fg = clicks?.first_google_at;
+    const lg = clicks?.last_google_at;
+    const fm = clicks?.first_meta_at;
+    const lm = clicks?.last_meta_at;
+
+    // First-click: earliest known touch wins, Google tiebreak (stable).
+    const firstG = fg ?? lg;
+    const firstM = fm ?? lm;
+    if (firstG == null && firstM == null) first_click.direct++;
+    else if (firstM == null || (firstG != null && firstG <= firstM)) first_click.google++;
+    else first_click.meta++;
+
+    // Last-click: latest known touch wins, Meta tiebreak (stable).
+    const lastG = lg ?? fg;
+    const lastM = lm ?? fm;
+    if (lastG == null && lastM == null) last_click.direct++;
+    else if (lastG == null || (lastM != null && lastM >= lastG)) last_click.meta++;
+    else last_click.google++;
+
+    // Linear: unique touches (dedupe same-click first=last), split 1/N.
+    const gTouches = new Set<number>();
+    if (fg != null) gTouches.add(fg);
+    if (lg != null) gTouches.add(lg);
+    const mTouches = new Set<number>();
+    if (fm != null) mTouches.add(fm);
+    if (lm != null) mTouches.add(lm);
+    const total = gTouches.size + mTouches.size;
+    if (total === 0) linear.direct++;
+    else {
+      linear.google += gTouches.size / total;
+      linear.meta += mTouches.size / total;
+    }
+  }
+
+  const normalize = (s: { google: number; meta: number; direct: number }): AttributionShare => ({
+    google: rate(s.google, rows.length),
+    meta: rate(s.meta, rows.length),
+    direct: rate(s.direct, rows.length),
+  });
+
+  return {
+    first_click: normalize(first_click),
+    last_click: normalize(last_click),
+    linear: normalize(linear),
+    total_orders: rows.length,
   };
 }
