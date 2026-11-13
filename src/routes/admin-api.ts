@@ -216,7 +216,13 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
     if (range.from) q = q.where("event_time", ">=", Timestamp.fromDate(range.from));
     if (range.to) q = q.where("event_time", "<", Timestamp.fromDate(range.to));
     const snap = await q.orderBy("event_time", "desc").limit(ANALYTICS_MAX_ROWS).get();
-    const logs = snap.docs.map((d) => d.data() as ConversionLog);
+    // Analytics is about purchases (orders + value + match rate). Store Visit
+    // events share action_source=physical_store with store purchases but have
+    // amount 0; mixing them inflates "Total orders" and deflates avg order
+    // value. Dedicated Store Visit metrics belong in a separate view.
+    const logs = snap.docs
+      .map((d) => d.data() as ConversionLog)
+      .filter((log) => (log.event_type ?? "purchase") === "purchase");
 
     const channel = req.query.channel === "online" || req.query.channel === "offline"
       ? (req.query.channel as Channel)

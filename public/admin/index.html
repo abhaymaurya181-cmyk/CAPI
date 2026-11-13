@@ -1005,6 +1005,31 @@
     .items-summary { font-size: 12px; line-height: 1.4; }
     .items-summary .item-line { color: var(--muted); }
     .items-summary .item-line strong { color: inherit; font-weight: 600; }
+    .source-legend {
+      background: #faf9fc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      font-size: 12px;
+      line-height: 1.8;
+      color: var(--muted);
+    }
+    .source-legend strong { color: var(--text, #222); margin-right: 4px; }
+    .source-legend .legend-item { display: block; margin-top: 2px; }
+    .source-legend .legend-tag {
+      display: inline-block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      margin-right: 8px;
+      font-weight: 500;
+    }
+    .source-legend .src-off { background: #e6f4ea; color: #137333; }
+    .source-legend .src-mp  { background: #e6eefc; color: #2a5bb8; }
+    .source-legend .src-vis { background: #fef4e6; color: #a34d00; }
+    .source-legend .src-csv { background: #f1f3f4; color: #5f6368; }
     .bar {
       display: inline-block; height: 8px; border-radius: 4px;
       background: var(--accent); vertical-align: middle; margin-right: 8px;
@@ -1109,6 +1134,13 @@
           <div class="page-header">
             <h2>Conversions</h2>
             <div class="muted" id="conversions-count">—</div>
+          </div>
+          <div class="source-legend">
+            <strong>Note:</strong> The <em>Source</em> column tells you where this row came from.
+            <span class="legend-item"><span class="legend-tag src-off">ornaverse_offline</span> store purchase (POS / walk-in sale at a Lucira outlet)</span>
+            <span class="legend-item"><span class="legend-tag src-mp">ornaverse_marketplace</span> online purchase (Shopify order synced via OrnaVerse MarketPlace)</span>
+            <span class="legend-item"><span class="legend-tag src-vis">ornaverse_visits</span> store visit — a walk-in logged in OrnaVerse CRM, not a purchase (amount ₹0)</span>
+            <span class="legend-item"><span class="legend-tag src-csv">csv_upload</span> one-off CSV uploaded from the Sync tab</span>
           </div>
           <div class="toolbar">
             <input type="search" id="conversions-search" placeholder="Search by order ID" autocomplete="off" />
@@ -1889,7 +1921,9 @@
 
     function renderConversionRow(c) {
       const sourceLabel = {
-        ornaverse_offline: "OrnaVerse",
+        ornaverse_offline: "Store (POS)",
+        ornaverse_marketplace: "Online (website)",
+        ornaverse_visits: "Store Visit (walk-in)",
         csv_upload: "CSV",
       }[c.source] || c.source || "—";
       return `
@@ -2037,7 +2071,12 @@
       }
     }
 
-    const SOURCE_LABEL = { ornaverse_offline: "OrnaVerse", csv_upload: "CSV" };
+    const SOURCE_LABEL = {
+      ornaverse_offline: "Store (POS)",
+      ornaverse_marketplace: "Online",
+      ornaverse_visits: "Store Visit",
+      csv_upload: "CSV",
+    };
     const TRIGGER_LABEL = { schedule: "Scheduled", manual: "Manual", csv: "Upload", rescan: "Daily re-scan" };
 
     function renderSyncRow(r) {
