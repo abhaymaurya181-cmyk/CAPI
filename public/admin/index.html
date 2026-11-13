@@ -1032,6 +1032,7 @@
           <button class="active" data-tab="visitors">Visitors</button>
           <button data-tab="conversions">Conversions</button>
           <button data-tab="analytics">Analytics</button>
+          <button data-tab="visitor-analytics">Visitor Analytics</button>
         </nav>
       </aside>
       <main>
@@ -1236,6 +1237,46 @@
           </div>
         </section>
 
+        <section id="tab-visitor-analytics" class="tab hidden">
+          <div class="page-header">
+            <h2>Visitor Analytics</h2>
+            <div class="muted" id="visitor-analytics-note">By first-seen date (India time)</div>
+          </div>
+          <div class="toolbar">
+            <select id="visitor-analytics-range">
+              <option value="today">Today</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d" selected>Last 30 days</option>
+              <option value="all">All time</option>
+              <option value="custom">Custom range…</option>
+            </select>
+            <input type="date" id="visitor-analytics-from" class="hidden" />
+            <input type="date" id="visitor-analytics-to" class="hidden" />
+            <button class="btn-ghost" id="visitor-analytics-refresh" type="button">Refresh</button>
+            <span class="toolbar-msg" id="visitor-analytics-msg"></span>
+          </div>
+          <div class="kpi-grid" id="visitor-analytics-kpis"></div>
+          <div class="attribution-section">
+            <h3>Attribution — share of visitors by source</h3>
+            <div class="attribution-note muted">
+              Every visitor in the range is awarded 1.0 of credit per model. Unlike the orders view there's no click-window filter — a visitor may never have bought, so every stored click counts. Direct / organic = no ad click was ever captured for that visitor.
+            </div>
+            <div class="attribution-wrap">
+              <table class="data-table attribution-table">
+                <thead>
+                  <tr>
+                    <th>Attribution model</th>
+                    <th class="num">Google</th>
+                    <th class="num">Meta</th>
+                    <th class="num">Direct / Organic</th>
+                  </tr>
+                </thead>
+                <tbody id="visitor-analytics-attribution"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         <section id="tab-sync" class="tab hidden">
           <div class="page-header">
             <h2>Sync log</h2>
@@ -1397,6 +1438,7 @@
         if (tab === "visitors") loadVisitors();
         if (tab === "conversions") loadConversions();
         if (tab === "analytics") loadAnalytics();
+        if (tab === "visitor-analytics") loadVisitorAnalytics();
         if (tab === "sync") loadSync();
       });
     });
@@ -1481,6 +1523,7 @@
       function reload() {
         if (prefix === "visitors") loadVisitors();
         else if (prefix === "analytics") loadAnalytics();
+        else if (prefix === "visitor-analytics") loadVisitorAnalytics();
         else loadConversions();
       }
     }
@@ -2161,11 +2204,49 @@
       }
     }
 
+    // ---- Visitor Analytics page ----
+
+    async function loadVisitorAnalytics() {
+      const msg = $("#visitor-analytics-msg");
+      msg.classList.remove("err");
+      msg.textContent = "Loading…";
+      const params = buildRangeQuery("visitor-analytics");
+      try {
+        const a = await api("/admin/api/visitor-analytics?" + params.toString());
+        msg.textContent = a.truncated ? "Showing the latest 5,000 visitors only — narrow the date range." : "";
+        const attr = a.attribution || {};
+        $("#visitor-analytics-kpis").innerHTML = kpi("Total visitors", (attr.total_visitors || 0).toLocaleString());
+
+        const fmtCount = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+        const attrCell = (c) =>
+          `<td class="num"><span class="attr-pct">${pct(c.share)}</span><span class="attr-count">(${fmtCount(c.count)})</span></td>`;
+        const attrRow = (label, m) => `
+          <tr>
+            <td>${label}</td>
+            ${attrCell(m.google)}
+            ${attrCell(m.meta)}
+            ${attrCell(m.direct)}
+          </tr>`;
+        $("#visitor-analytics-attribution").innerHTML = attr.total_visitors
+          ? [
+              attrRow("First click", attr.first_click),
+              attrRow("Last click (non-direct)", attr.last_click),
+              attrRow("Linear", attr.linear),
+            ].join("")
+          : `<tr><td colspan="4" class="muted center">No visitors in this range.</td></tr>`;
+      } catch (err) {
+        msg.classList.add("err");
+        msg.textContent = "Failed to load: " + err.message;
+      }
+    }
+
     // ---- Wire controls ----
 
     wireRangeToggle("visitors");
     wireRangeToggle("conversions");
     wireRangeToggle("analytics");
+    wireRangeToggle("visitor-analytics");
+    $("#visitor-analytics-refresh").addEventListener("click", loadVisitorAnalytics);
     $("#analytics-channel").addEventListener("change", loadAnalytics);
     $("#analytics-store").addEventListener("change", loadAnalytics);
     $("#analytics-refresh").addEventListener("click", loadAnalytics);

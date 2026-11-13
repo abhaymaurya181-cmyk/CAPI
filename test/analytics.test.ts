@@ -7,6 +7,7 @@ import {
   istDay,
   summarizeAttribution,
   summarizeConversions,
+  summarizeVisitorAttribution,
   type AttributionClicks,
 } from "../src/lib/analytics.js";
 import { parseIstSaleRange } from "../src/routes/admin-api.js";
@@ -201,6 +202,31 @@ test("attributeOrders: per-order verdict under each model, newest first", () => 
   assert.equal(c_row.first_click, "meta");
   assert.equal(c_row.last_click, "meta");
   assert.equal(c_row.linear, "meta");
+});
+
+test("summarizeVisitorAttribution: counts visitors, not orders; no click-window filter", () => {
+  const visitors = [
+    { clicks: { first_google_at: T.D1 } },                      // Google only
+    { clicks: { first_meta_at: T.D2 } },                        // Meta only
+    { clicks: { first_google_at: T.D1, last_meta_at: T.D4 } },  // Both — G first, M last
+    { clicks: undefined },                                      // Direct
+  ];
+  const a = summarizeVisitorAttribution(visitors);
+  assert.equal(a.total_visitors, 4);
+  // First click: G=2 (visitors 1 & 3), M=1 (visitor 2), Direct=1 (visitor 4).
+  assert.deepEqual(a.first_click.google, { share: 0.5, count: 2 });
+  assert.deepEqual(a.first_click.meta, { share: 0.25, count: 1 });
+  assert.deepEqual(a.first_click.direct, { share: 0.25, count: 1 });
+  // Last click: G=1 (visitor 1), M=2 (visitors 2 & 3), Direct=1.
+  assert.deepEqual(a.last_click.google, { share: 0.25, count: 1 });
+  assert.deepEqual(a.last_click.meta, { share: 0.5, count: 2 });
+  assert.deepEqual(a.last_click.direct, { share: 0.25, count: 1 });
+});
+
+test("summarizeVisitorAttribution: empty input returns zeros", () => {
+  const a = summarizeVisitorAttribution([]);
+  assert.equal(a.total_visitors, 0);
+  assert.deepEqual(a.first_click.google, { share: 0, count: 0 });
 });
 
 test("attributeOrders: respects channel and store filters", () => {

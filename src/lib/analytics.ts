@@ -282,6 +282,54 @@ export function summarizeAttribution(
   };
 }
 
+export interface VisitorAttributionSummary {
+  first_click: AttributionModelResult;
+  last_click: AttributionModelResult;
+  linear: AttributionModelResult;
+  total_visitors: number;
+}
+
+/**
+ * Attribution across visitors (not orders). Each visitor is awarded 1.0 of
+ * credit per model; linear splits across unique touchpoints. Unlike the
+ * order version this does NOT apply a click-window filter — a visitor may
+ * never have bought, so there is no sale time to anchor eligibility to.
+ */
+export function summarizeVisitorAttribution(
+  visitors: Array<{ clicks?: AttributionClicks }>
+): VisitorAttributionSummary {
+  const first_click = emptyShare();
+  const last_click = emptyShare();
+  const linear = emptyShare();
+
+  for (const { clicks } of visitors) {
+    const a = attributeOrder(clicks);
+    first_click[a.first_click]++;
+    last_click[a.last_click]++;
+    linear.google += a.linear_split.google;
+    linear.meta += a.linear_split.meta;
+    linear.direct += a.linear_split.direct;
+  }
+
+  const n = visitors.length;
+  const cell = (count: number): AttributionCell => ({
+    share: rate(count, n),
+    count: round2(count),
+  });
+  const normalize = (s: { google: number; meta: number; direct: number }): AttributionModelResult => ({
+    google: cell(s.google),
+    meta: cell(s.meta),
+    direct: cell(s.direct),
+  });
+
+  return {
+    first_click: normalize(first_click),
+    last_click: normalize(last_click),
+    linear: normalize(linear),
+    total_visitors: n,
+  };
+}
+
 /** Per-order attribution for the detail table under the attribution summary. */
 export function attributeOrders(
   items: Array<{ log: ConversionLog; clicks?: AttributionClicks }>,

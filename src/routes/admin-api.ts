@@ -25,6 +25,7 @@ import {
   attributeOrders,
   summarizeAttribution,
   summarizeConversions,
+  summarizeVisitorAttribution,
   type AttributionClicks,
   type Channel,
 } from "../lib/analytics.js";
@@ -265,6 +266,39 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
       ...summary,
       attribution,
       attribution_orders,
+    });
+  });
+
+  // Visitor-side attribution: for every visitor first seen in the range, which
+  // channel drove them per model. Unlike the orders view there is no sale time
+  // to anchor a click-window filter to, so every stored click counts.
+  app.get<{
+    Querystring: { range?: string; from?: string; to?: string };
+  }>("/admin/api/visitor-analytics", async (req, reply) => {
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
+    const range = parseIstSaleRange(req.query);
+    let q: FirebaseFirestore.Query = visitorsCol;
+    if (range.from) q = q.where("first_seen_at", ">=", Timestamp.fromDate(range.from));
+    if (range.to) q = q.where("first_seen_at", "<", Timestamp.fromDate(range.to));
+    const snap = await q.orderBy("first_seen_at", "desc").limit(ANALYTICS_MAX_ROWS).get();
+
+    const visitors = snap.docs.map((d) => {
+      const v = d.data() as Visitor;
+      return {
+        clicks: {
+          first_google_at: v.click_ids?.google?.first?.captured_at?.toMillis(),
+          last_google_at: v.click_ids?.google?.last?.captured_at?.toMillis(),
+          first_meta_at: v.click_ids?.meta?.first?.captured_at?.toMillis(),
+          last_meta_at: v.click_ids?.meta?.last?.captured_at?.toMillis(),
+        },
+      };
+    });
+
+    const attribution = summarizeVisitorAttribution(visitors);
+    return reply.send({
+      range: { from: range.from?.toISOString() ?? null, to: range.to?.toISOString() ?? null },
+      truncated: snap.size === ANALYTICS_MAX_ROWS,
+      attribution,
     });
   });
 
