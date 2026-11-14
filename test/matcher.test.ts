@@ -120,6 +120,19 @@ test("buildConversion: event_type=store_visit → Google-only, no Meta sender", 
   assert.equal(c.google_ads?.status, "pending");
 });
 
+test("buildConversion: pending_invoice=true → no Meta, no Google sender records", () => {
+  const c = buildConversion(
+    { ...sale, pending_invoice: true, shopify_order_id: 18994047385818 },
+    "ornaverse_marketplace",
+    visitor(),
+    { mode: "last", windowMs: WINDOW, nowMs: SALE, action_source: "website" }
+  );
+  assert.equal(c.pending_invoice, true);
+  assert.equal(c.shopify_order_id, 18994047385818);
+  assert.equal(c.meta_capi, undefined, "no Meta send while awaiting invoice");
+  assert.equal(c.google_ads, undefined, "no Google send while awaiting invoice");
+});
+
 test("buildConversion: action_source=website → Google only, no Meta (Shopify pixel fires Meta)", () => {
   const c = buildConversion(sale, "ornaverse_marketplace", visitor(), {
     mode: "last",

@@ -130,6 +130,20 @@ export const JOBS = [
     scheduleEnv: "RESCAN_POS_ORDERS_SCHEDULE",
     schedule: "15 4 * * *",
   },
+  // MarketPlace Order placeholders (pending_invoice=true). Stagger from the
+  // Invoice feed (:15) so both can run in the same hour.
+  {
+    suffix: "sync-online-orders",
+    path: "/internal/sync-online-orders",
+    scheduleEnv: "SYNC_ONLINE_ORDERS_SCHEDULE",
+    schedule: "50 * * * *",
+  },
+  {
+    suffix: "sync-online-orders-rescan",
+    path: "/internal/sync-online-orders-rescan",
+    scheduleEnv: "RESCAN_ONLINE_ORDERS_SCHEDULE",
+    schedule: "30 4 * * *",
+  },
 ];
 
 // ---------------------------------------------------------------- pure helpers (unit-tested)

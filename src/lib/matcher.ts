@@ -46,6 +46,15 @@ export interface SaleInput {
   store_name?: string;
   /** Line items for admin display; never sent to Meta / Google. */
   items?: SaleItem[];
+  /** Shopify order id. Lets us dedup OrnaVerse Order vs OrnaVerse Invoice later. */
+  shopify_order_id?: number;
+  /**
+   * True when sourced from a MarketPlace Order that has no Invoice yet.
+   * Dispatcher skips Google/Meta sends for these; row still shows in admin so
+   * stakeholders see the full order count. When the Invoice eventually posts,
+   * the Invoice importer deletes this placeholder and writes the real row.
+   */
+  pending_invoice?: boolean;
 }
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -184,14 +193,17 @@ export function buildConversion(
   const event_type = opts.event_type ?? "purchase";
   // Meta: skipped for website (Shopify client-side pixel already fires) and
   //       for Store Visit (no Meta equivalent event; the eventual sale fires).
-  // Google: sent in both cases; dedupes server-vs-gtag by transactionId.
-  const skipMeta = isWebsite || event_type === "store_visit";
-  const skipGoogle = false;
+  // Google: normally sent; deferred when the row is a MarketPlace Order
+  // placeholder (no Invoice yet). The Invoice importer will replace this row.
+  const skipMeta = isWebsite || event_type === "store_visit" || Boolean(sale.pending_invoice);
+  const skipGoogle = Boolean(sale.pending_invoice);
 
   return {
     source,
     event_type,
     ...(sale.items && sale.items.length ? { items: sale.items } : {}),
+    ...(sale.shopify_order_id ? { shopify_order_id: sale.shopify_order_id } : {}),
+    ...(sale.pending_invoice ? { pending_invoice: true } : {}),
     order_id: sale.sale_id,
     order_amount: sale.amount,
     currency: sale.currency,

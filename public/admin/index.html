@@ -1030,6 +1030,17 @@
     .source-legend .src-mp  { background: #e6eefc; color: #2a5bb8; }
     .source-legend .src-vis { background: #fef4e6; color: #a34d00; }
     .source-legend .src-csv { background: #f1f3f4; color: #5f6368; }
+    .pending-invoice-chip {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #fef4e6;
+      color: #a34d00;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
     .bar {
       display: inline-block; height: 8px; border-radius: 4px;
       background: var(--accent); vertical-align: middle; margin-right: 8px;
@@ -1141,6 +1152,7 @@
             <span class="legend-item"><span class="legend-tag src-mp">ornaverse_marketplace</span> online purchase (Shopify order synced via OrnaVerse MarketPlace)</span>
             <span class="legend-item"><span class="legend-tag src-vis">ornaverse_visits</span> store visit — a walk-in logged in OrnaVerse CRM, not a purchase (amount ₹0)</span>
             <span class="legend-item"><span class="legend-tag src-csv">csv_upload</span> one-off CSV uploaded from the Sync tab</span>
+            <span class="legend-item"><span class="pending-invoice-chip">Pending invoice</span> an online order that reached OrnaVerse but doesn't have an Invoice yet — kept visible for the dashboard; not sent to Google Ads until the Invoice posts.</span>
           </div>
           <div class="toolbar">
             <input type="search" id="conversions-search" placeholder="Search by order ID" autocomplete="off" />
@@ -1935,7 +1947,7 @@
           <td>${fmtMoney(c.amount, c.currency)}</td>
           <td>${c.matched_by ? esc(c.matched_by) : `<span class="muted">no visitor</span>`}</td>
           <td>${statusPill(c.meta_status)}</td>
-          <td>${statusPill(c.google_status)}</td>
+          <td>${c.pending_invoice ? `<span class="pending-invoice-chip">Pending invoice</span>` : statusPill(c.google_status)}</td>
           <td>${[
             clickBadge("gclid", c.has_gclid),
             clickBadge("gbraid", c.has_gbraid),

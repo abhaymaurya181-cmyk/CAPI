@@ -107,6 +107,9 @@ export function mapMarketplaceRow(row: MarketPlaceInvoiceRow): SaleInput | null 
     // No physical store for marketplace orders; the company_code (e.g. "N18")
     // is the fulfilment location, useful to filter online fulfilment by site.
     store_name: row.company_code ? `Online (${row.company_code})` : "Online",
+    // Carried through so the sync layer can delete a matching `mp-ord-*`
+    // placeholder once the Invoice posts.
+    shopify_order_id: row.marketplace_order_id,
   };
 }
 

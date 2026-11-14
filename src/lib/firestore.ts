@@ -174,6 +174,14 @@ export interface ConversionLog {
   event_type?: EventType;
   /** Display-only line items (OrnaVerse Order Retrieve). Never sent to ad platforms. */
   items?: ConversionItem[];
+  /** Shopify order id, when the sale came from a marketplace feed. */
+  shopify_order_id?: number;
+  /**
+   * True when the row came from MarketPlace/Order/List and no corresponding
+   * Invoice exists yet. Dispatcher skips the Google/Meta send. Shown in admin
+   * so stakeholders see the full order count on day 1.
+   */
+  pending_invoice?: boolean;
   order_id: string;
   order_amount: number;
   currency: string;
@@ -368,4 +376,32 @@ export async function updateConversionSender(
 export async function getConversion(orderId: string): Promise<ConversionLog | null> {
   const snap = await conversionsCol.doc(orderId).get();
   return snap.exists ? (snap.data() as ConversionLog) : null;
+}
+
+/**
+ * Delete pending-invoice placeholder rows (from MarketPlace Order feed) whose
+ * shopify_order_id is in `shopifyOrderIds`. Called after the Invoice importer
+ * has written the real rows — these placeholders are no longer needed.
+ * Returns the number of docs deleted.
+ */
+export async function deletePendingInvoicePlaceholders(
+  shopifyOrderIds: number[]
+): Promise<number> {
+  if (shopifyOrderIds.length === 0) return 0;
+  let deleted = 0;
+  // `in` supports up to 30 values per query (Firestore limit).
+  for (let i = 0; i < shopifyOrderIds.length; i += 30) {
+    const batch = shopifyOrderIds.slice(i, i + 30);
+    const snap = await conversionsCol
+      .where("pending_invoice", "==", true)
+      .where("shopify_order_id", "in", batch)
+      .get();
+    for (let j = 0; j < snap.docs.length; j += 100) {
+      const w = db.batch();
+      for (const d of snap.docs.slice(j, j + 100)) w.delete(d.ref);
+      await w.commit();
+      deleted += Math.min(100, snap.docs.length - j);
+    }
+  }
+  return deleted;
 }

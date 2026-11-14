@@ -417,6 +417,7 @@ export default async function adminApiRoute(app: FastifyInstance): Promise<void>
           has_gbraid: Boolean(log.gbraid),
           has_wbraid: Boolean(log.wbraid),
           has_fbc: Boolean(log.fbc),
+          pending_invoice: Boolean(log.pending_invoice),
         };
       });
       return reply.send({ items, count: items.length });

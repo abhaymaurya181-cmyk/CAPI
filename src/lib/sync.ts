@@ -2,6 +2,7 @@ import { Timestamp } from "@google-cloud/firestore";
 import {
   conversionsCol,
   db,
+  deletePendingInvoicePlaceholders,
   syncRunsCol,
   syncStateCol,
   type ConversionSource,
@@ -20,6 +21,10 @@ import {
   fetchOrnaverseMarketplaceSales,
   fetchOrnaverseMarketplaceSalesDetailed,
 } from "../importers/ornaverse-marketplace.js";
+import {
+  fetchMarketPlaceOrders,
+  fetchMarketPlaceOrdersDetailed,
+} from "../importers/ornaverse-marketplace-orders.js";
 import {
   fetchOrnaverseVisits,
   fetchOrnaverseVisitsDetailed,
@@ -289,6 +294,10 @@ export async function runOrnaverseMarketplaceSync(trigger: SyncTrigger): Promise
     }
 
     const summary = await importSales(sales, source, ref.id, { onlyNew: true, actionSource: "website" });
+    // Every real Invoice supersedes the MarketPlace Order placeholder — remove
+    // them so the admin stops showing the row twice.
+    const shopifyIds = sales.map((s) => s.shopify_order_id).filter((x): x is number => typeof x === "number");
+    await deletePendingInvoicePlaceholders(shopifyIds);
     await ref.update({ status: finalStatus(summary), finished_at: Timestamp.now(), ...summary });
     await stateRef.set(
       { last_window_to: Timestamp.fromDate(window.to), last_run_id: ref.id },
@@ -323,6 +332,97 @@ export async function runOrnaverseMarketplaceRescan(): Promise<SyncRun & { id: s
     let fetched: { sales: SaleInput[]; capped: boolean };
     try {
       fetched = await fetchOrnaverseMarketplaceSalesDetailed(window.from, window.to);
+    } catch (err) {
+      await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
+      return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+    }
+
+    const summary = await importSales(fetched.sales, source, ref.id, { onlyNew: true, actionSource: "website" });
+    const shopifyIds = fetched.sales.map((s) => s.shopify_order_id).filter((x): x is number => typeof x === "number");
+    await deletePendingInvoicePlaceholders(shopifyIds);
+    const status = fetched.capped && finalStatus(summary) === "ok" ? "partial" : finalStatus(summary);
+    await ref.update({
+      status,
+      finished_at: Timestamp.now(),
+      ...summary,
+      ...(fetched.capped ? { error: "page_limit_reached" } : {}),
+    });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  } finally {
+    await stateRef.set({ locked_until: null }, { merge: true });
+  }
+}
+
+/**
+ * Scheduled / manual OrnaVerse MarketPlace Order pull — placeholders only.
+ * Every row is written with pending_invoice:true so it shows on the dashboard
+ * the moment the Shopify order lands in OrnaVerse. Google / Meta sends are
+ * deferred until the Invoice posts, at which point the Invoice sync deletes
+ * this placeholder and writes the real row.
+ */
+export async function runOrnaverseMarketplaceOrdersSync(trigger: SyncTrigger): Promise<SyncRun & { id: string }> {
+  const source = "ornaverse_marketplace";
+  const scheduledKey = "ornaverse_marketplace_orders";
+
+  const skipped = async (error: string) => {
+    const ref = await startRun(source, trigger);
+    await ref.update({ status: "skipped", error, finished_at: Timestamp.now() });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  };
+
+  if (!ornaverseConfigured()) return skipped("ornaverse_not_configured");
+  if (!(await acquireLock(scheduledKey))) return skipped("another_sync_running");
+
+  const stateRef = syncStateCol.doc(scheduledKey);
+  try {
+    const state = (await stateRef.get()).data() as SyncState | undefined;
+    const window = nextWindow(state, Date.now());
+    const ref = await startRun(source, trigger, window);
+
+    let sales: SaleInput[];
+    try {
+      sales = await fetchMarketPlaceOrders(window.from, window.to);
+    } catch (err) {
+      await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
+      return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+    }
+
+    const summary = await importSales(sales, source, ref.id, { onlyNew: true, actionSource: "website" });
+    await ref.update({ status: finalStatus(summary), finished_at: Timestamp.now(), ...summary });
+    await stateRef.set(
+      { last_window_to: Timestamp.fromDate(window.to), last_run_id: ref.id },
+      { merge: true }
+    );
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  } finally {
+    await stateRef.set({ locked_until: null }, { merge: true });
+  }
+}
+
+/** Daily rescan for marketplace Orders. */
+export async function runOrnaverseMarketplaceOrdersRescan(): Promise<SyncRun & { id: string }> {
+  const source = "ornaverse_marketplace";
+  const scheduledKey = "ornaverse_marketplace_orders";
+  const trigger: SyncTrigger = "rescan";
+
+  const skipped = async (error: string) => {
+    const ref = await startRun(source, trigger);
+    await ref.update({ status: "skipped", error, finished_at: Timestamp.now() });
+    return { ...((await ref.get()).data() as SyncRun), id: ref.id };
+  };
+
+  if (!ornaverseConfigured()) return skipped("ornaverse_not_configured");
+  if (!(await acquireLock(scheduledKey))) return skipped("another_sync_running");
+
+  const stateRef = syncStateCol.doc(scheduledKey);
+  try {
+    const now = Date.now();
+    const window = { from: new Date(now - rescanDays() * 24 * 3600 * 1000), to: new Date(now) };
+    const ref = await startRun(source, trigger, window);
+
+    let fetched: { sales: SaleInput[]; capped: boolean };
+    try {
+      fetched = await fetchMarketPlaceOrdersDetailed(window.from, window.to);
     } catch (err) {
       await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
       return { ...((await ref.get()).data() as SyncRun), id: ref.id };

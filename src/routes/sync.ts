@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { syncRunsCol, type SyncRun } from "../lib/firestore.js";
 import { requireBearer } from "../lib/auth.js";
 import {
+  runOrnaverseMarketplaceOrdersRescan,
+  runOrnaverseMarketplaceOrdersSync,
   runOrnaverseMarketplaceRescan,
   runOrnaverseMarketplaceSync,
   runOrnaversePosOrdersRescan,
@@ -136,6 +138,31 @@ export default async function syncRoute(app: FastifyInstance): Promise<void> {
   app.post("/admin/api/sync-pos-orders", async (req, reply) => {
     if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
     const run = await runOrnaversePosOrdersSync("manual");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  // Cloud Scheduler: MarketPlace Order placeholders (show on dashboard the
+  // moment Shopify creates them, don't send to ads until Invoice posts).
+  app.post("/internal/sync-online-orders", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaverseMarketplaceOrdersSync("schedule");
+    req.log.info({ run: run.id, status: run.status, error: run.error }, "mp orders sync complete");
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  app.post("/internal/sync-online-orders-rescan", async (req, reply) => {
+    if (!requireBearer(req, reply, "INTERNAL_TOKEN")) return;
+    const run = await runOrnaverseMarketplaceOrdersRescan();
+    req.log.info(
+      { run: run.id, status: run.status, error: run.error, new: run.processed, existing: run.skipped_duplicate },
+      "mp orders rescan complete"
+    );
+    return reply.send(serializeRun(run.id, run));
+  });
+
+  app.post("/admin/api/sync-online-orders", async (req, reply) => {
+    if (!requireBearer(req, reply, "LUCIRA_CREDS_CAPI")) return;
+    const run = await runOrnaverseMarketplaceOrdersSync("manual");
     return reply.send(serializeRun(run.id, run));
   });
 

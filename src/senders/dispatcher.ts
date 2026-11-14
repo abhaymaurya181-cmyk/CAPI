@@ -23,6 +23,13 @@ export async function dispatchConversion(orderId: string, only?: Sender): Promis
   const isStoreVisit = log.event_type === "store_visit";
   const isWebsite = log.action_source === "website";
 
+  // Orders pulled from MarketPlace/Order/List without a matching Invoice are
+  // placeholders — they show in the admin so the dashboard matches Shopify's
+  // raw order count, but we don't send to ad platforms until the Invoice
+  // posts. buildConversion omits sender records for these, but double-guard
+  // in case an existing row flips state during a sync run.
+  if (log.pending_invoice) return;
+
   // Website orders: Shopify's own pixel already reports to Meta client-side,
   // so a server CAPI would double-count. Google Ads server-side send IS wanted
   // (Google dedupes by transactionId across gtag + server), gated by a
