@@ -28,6 +28,7 @@ import {
   fetchOrnaversePosOrders,
   fetchOrnaversePosOrdersDetailed,
 } from "../importers/ornaverse-pos-orders.js";
+import { fetchOrnaversePosInvoiceSmart } from "../importers/ornaverse-pos-smart.js";
 import type { EventType } from "./firestore.js";
 
 const DISPATCH_CONCURRENCY = 10;
@@ -232,7 +233,8 @@ export async function runOrnaverseSync(trigger: SyncTrigger): Promise<SyncRun & 
 
     let sales: SaleInput[];
     try {
-      sales = await fetchOrnaverseSales(window.from, window.to);
+      // Smart importer: Invoice is primary, Order date overrides when linked.
+      sales = (await fetchOrnaversePosInvoiceSmart(window.from, window.to)).sales;
     } catch (err) {
       await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
       return { ...((await ref.get()).data() as SyncRun), id: ref.id };
@@ -573,7 +575,9 @@ export async function runOrnaverseRescan(): Promise<SyncRun & { id: string }> {
 
     let fetched: { sales: SaleInput[]; capped: boolean };
     try {
-      fetched = await fetchOrnaverseSalesDetailed(window.from, window.to);
+      // Smart importer: Invoice is primary, Order date overrides when linked.
+      const out = await fetchOrnaversePosInvoiceSmart(window.from, window.to);
+      fetched = { sales: out.sales, capped: out.capped };
     } catch (err) {
       await ref.update({ status: "failed", error: (err as Error).message, finished_at: Timestamp.now() });
       return { ...((await ref.get()).data() as SyncRun), id: ref.id };
